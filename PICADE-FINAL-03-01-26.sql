@@ -1,5 +1,5 @@
 -- MySQL Workbench Forward Engineering
-DROP DATABASE IF EXISTS `picade` ;
+DROP DATABASE IF EXISTS `Picade` ;
 
 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0;
 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0;
@@ -8,7 +8,6 @@ SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,N
 -- -----------------------------------------------------
 -- Schema PICADE
 -- -----------------------------------------------------
-
 -- -----------------------------------------------------
 -- Schema PICADE
 -- -----------------------------------------------------

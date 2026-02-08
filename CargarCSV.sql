@@ -4,7 +4,7 @@ USE `PICADE`;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\PAISES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\PAISES-FINAL.csv'
 INTO TABLE `Pais`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -26,7 +26,7 @@ SET
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\ESTADOS-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\ESTADOS-FINAL.csv'
 INTO TABLE `Estado`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -52,7 +52,7 @@ ALTER TABLE `Estado` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\MUNICIPIO-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\MUNICIPIO-FINAL.csv'
 INTO TABLE `Municipio`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -79,18 +79,20 @@ ALTER TABLE `Municipio` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-CENTROS-TRABAJO-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-CENTROS-TRABAJO-FINAL.csv'
 INTO TABLE `Cat_Centros_Trabajo`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
 OPTIONALLY ENCLOSED BY '"'
 LINES TERMINATED BY '\r\n'
 IGNORE 1 ROWS
-(`Codigo`,
+(
+@Var_Codigo,
 @Var_Nombre,
 @Var_Direccion_Fisica,
 @Fk_Id_Municipio_CatCT)
 SET
+	`Codigo` = NULLIF(TRIM(@Var_Codigo), ''), -- Dejamos el código vacio explícitamente
 	`Nombre` = TRIM(@Var_Nombre), -- Limpiamos espacios
 	`Direccion_Fisica` = NULLIF(TRIM(@Var_Direccion_Fisica), ''),
     `Fk_Id_Municipio_CatCT` = NULLIF(@Fk_Id_Municipio_CatCT, ''),
@@ -108,7 +110,7 @@ ALTER TABLE `Cat_Centros_Trabajo` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-DEPARTAMENTOS-TRABAJO-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-DEPARTAMENTOS-TRABAJO-FINAL.csv'
 INTO TABLE `Cat_Departamentos`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -137,7 +139,7 @@ ALTER TABLE `Cat_Departamentos` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-DIRECCIONES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-DIRECCIONES-FINAL.csv'
 INTO TABLE `Cat_Direcciones`
 CHARACTER SET latin1
 FIELDS TERMINATED BY ';'
@@ -163,9 +165,9 @@ ALTER TABLE `Cat_Direcciones` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-SUBDIRECCIONES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-SUBDIRECCIONES-FINAL.csv'
 INTO TABLE `Cat_Subdirecciones`
-CHARACTER SET utf8mb4
+CHARACTER SET latin1
 FIELDS TERMINATED BY ';'
 OPTIONALLY ENCLOSED BY '"'
 LINES TERMINATED BY '\r\n'
@@ -192,7 +194,7 @@ ALTER TABLE `Cat_Subdirecciones` AUTO_INCREMENT = 1;
 
 -- Nota: tu CSV trae Id_Gerencias y Activo.
 -- Si la tabla está VACÍA, puedes cargar el Id para conservar exactamente esos IDs.
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-GERENCIAS-ACTIVOS-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-GERENCIAS-ACTIVOS-FINAL.csv'
 INTO TABLE `Cat_Gerencias_Activos`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -219,7 +221,7 @@ ALTER TABLE `Cat_Gerencias_Activos` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-REGIMENES-TRABAJO-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-REGIMENES-TRABAJO-FINAL.csv'
 INTO TABLE `Cat_Regimenes_Trabajo`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -249,18 +251,20 @@ ALTER TABLE `Cat_Regimenes_Trabajo` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-REGIONES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-REGIONES-FINAL.csv'
 INTO TABLE `Cat_Regiones_Trabajo`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
 OPTIONALLY ENCLOSED BY '"'
 LINES TERMINATED BY '\r\n'
 IGNORE 1 ROWS
-(@Var_Nombre,      -- Leemos en variable temporal
+(
+@Var_Codigo,
+@Var_Nombre,      -- Leemos en variable temporal
 @Var_Descripcion  -- Leemos en variable temporal
 )
 SET
-	`Codigo`      = NULL, -- Dejamos el código vacio explícitamente
+	`Codigo` = NULLIF(TRIM(@Var_Codigo), ''), -- Dejamos el código vacio explícitamente
     `Nombre`      = TRIM(@Var_Nombre), -- Limpiamos espacios
     `Descripcion` = NULLIF(TRIM(@Var_Descripcion), ''),
     `Activo` = 1,
@@ -270,10 +274,11 @@ SET
 -- SHOW TABLE STATUS LIKE 'Cat_Regiones_Trabajo';
 
 -- SELECT * FROM `Cat_Regiones_Trabajo` /*LIMIT 0, 3000*/;
+
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-PUESTOS-TRABAJO-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-PUESTOS-TRABAJO-FINAL.csv'
 INTO TABLE `Cat_Puestos_Trabajo`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -281,12 +286,12 @@ OPTIONALLY ENCLOSED BY '"'
 LINES TERMINATED BY '\r\n'
 IGNORE 1 ROWS
 (
--- @Var_Codigo,
+@Var_Codigo,
 @Var_Nombre,      -- Leemos en variable temporal
 @Var_Descripcion  -- Leemos en variable temporal
 )
 SET
-	`Codigo` = NULL, -- NULLIF(TRIM(@Var_Codigo), ''), -- Dejamos el código vacio explícitamente
+	`Codigo` = NULLIF(TRIM(@Var_Codigo), ''), -- Dejamos el código vacio explícitamente
     `Nombre`      = TRIM(@Var_Nombre), -- Limpiamos espacios
     `Descripcion` = NULLIF(TRIM(@Var_Descripcion), ''),
     `Activo` = 1,
@@ -303,7 +308,7 @@ ALTER TABLE `Cat_Puestos_Trabajo` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\INFO-PERSONAL-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\INFO-PERSONAL-FINAL.csv'
 INTO TABLE `Info_Personal`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -370,7 +375,7 @@ ALTER TABLE `Info_Personal` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-ROLES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-ROLES-FINAL.csv'
 INTO TABLE `Cat_Roles`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -400,7 +405,7 @@ ALTER TABLE `Cat_Roles` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\INFO-USUARIO-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\INFO-USUARIO-FINAL.csv'
 INTO TABLE `Usuarios`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -427,7 +432,7 @@ ALTER TABLE `Usuarios` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-ESTATUS-CAPACITACIONES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-ESTATUS-CAPACITACIONES-FINAL.csv'
 INTO TABLE `Cat_Estatus_Capacitacion`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -460,7 +465,7 @@ ALTER TABLE `Cat_Estatus_Capacitacion` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-MODALIDAD-CAPACITACIONES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-MODALIDAD-CAPACITACIONES-FINAL.csv'
 INTO TABLE `Cat_Modalidad_Capacitacion`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -485,7 +490,7 @@ SET
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-CASES-SEDES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-CASES-SEDES-FINAL.csv'
 INTO TABLE `Cat_Cases_Sedes`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -493,7 +498,7 @@ OPTIONALLY ENCLOSED BY '"'
 LINES TERMINATED BY '\r\n'
 IGNORE 1 ROWS
 (
-  -- @Var_Codigo,
+  @Var_Codigo,
   @Var_Nombre,
   @Aulas,
   @Salas,
@@ -507,7 +512,7 @@ IGNORE 1 ROWS
 )
 SET
     /* 1. CÓDIGO (No viene en CSV, se queda NULL para cumplir UNIQUE) */
-	`Codigo` = NULL, -- NULLIF(TRIM(@Var_Codigo), ''), -- Dejamos el código vacio explícitamente
+	`Codigo` = NULLIF(TRIM(@Var_Codigo), ''), -- Dejamos el código vacio explícitamente
 	`Nombre` = TRIM(@Var_Nombre), -- Limpiamos espacios
 
     /* 2. INFRAESTRUCTURA (Limpieza: Vacío '' se convierte en 0) */
@@ -541,7 +546,7 @@ ALTER TABLE `Cat_Cases_Sedes` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-TIPO-CAPACITACIONES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-TIPO-CAPACITACIONES-FINAL.csv'
 INTO TABLE `Cat_Tipos_Instruccion_Cap`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -568,7 +573,7 @@ ALTER TABLE `Cat_Tipos_Instruccion_Cap` AUTO_INCREMENT = 1;
 /* ------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------- */
 
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-CAPACITACIONES-FINAL.csv'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-CAPACITACIONES-FINAL.csv'
 INTO TABLE `Cat_Temas_Capacitacion`
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ';'
@@ -604,7 +609,7 @@ ALTER TABLE `Cat_Temas_Capacitacion` AUTO_INCREMENT = 1;
 -- ----------------------------------------------------------------------------------------------
 
 -- Comando de carga masiva
-LOAD DATA INFILE 'C:\\Users\\Jesus_PC\\Desktop\\PICADE\\CVS-FINALES\\CATALOGO-ESTATUS-PARTICIPANTE-FINAL.CSV'
+LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-ESTATUS-PARTICIPANTE-FINAL.CSV'
 INTO TABLE `Cat_Estatus_Participante`
 CHARACTER SET utf8mb4           -- Para que reconozca acentos y ñ
 FIELDS TERMINATED BY ';'        -- Las columnas se separan por coma
