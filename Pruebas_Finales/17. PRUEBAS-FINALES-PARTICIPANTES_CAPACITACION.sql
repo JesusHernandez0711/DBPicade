@@ -1481,6 +1481,21 @@ CALL SP_ConsultarCapacitacionEspecifica(@C05_Ver);
 
 CALL SP_ConsultarCapacitacionEspecifica(@C06_Ver);
 
+-- Ejecutar para ver todo el historial (desde el año 2000 hasta hoy)
+CALL SP_GenerarReporteGerencial_Docente('2000-01-01', '2026-12-31');
+
+-- Generar DC-3 para el Curso 1 de la batería
+CALL SP_GenerarReporte_DC3_Masivo(@AdminEjecutor, @C01_Ver);
+-- Generar DC-3 para el Curso 2 de la batería
+CALL SP_GenerarReporte_DC3_Masivo(@AdminEjecutor, @C02_Ver);
+-- Generar DC-3 para el Curso 3 de la batería
+CALL SP_GenerarReporte_DC3_Masivo(@AdminEjecutor, @C03_Ver);
+-- Generar DC-3 para el Curso 4 de la batería
+CALL SP_GenerarReporte_DC3_Masivo(@AdminEjecutor, @C04_Ver);
+-- Generar DC-3 para el Curso 5 de la batería
+CALL SP_GenerarReporte_DC3_Masivo(@AdminEjecutor, @C05_Ver);
+-- Generar DC-3 para el Curso 6 de la batería
+CALL SP_GenerarReporte_DC3_Masivo(@AdminEjecutor, @C06_Ver);
 
 /* ==========================================================================================================
    FASE 14: LIMPIEZA FINAL (TEARDOWN)
