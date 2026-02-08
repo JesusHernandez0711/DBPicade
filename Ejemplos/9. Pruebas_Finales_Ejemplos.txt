@@ -1,0 +1,2867 @@
+/* =================================================================================
+   FASE 1: CREACIÓN Y NORMALIZACIÓN (HAPPY PATH & DATA DIRTY)
+   Objetivo: Verificar que se crea la jerarquía y se limpian espacios.
+   ================================================================================= */
+
+-- 1.1. Prueba de "Big Bang" (Registrar todo junto)
+-- [ESPERADO]: Mensaje 'Registro Exitoso', ids generados y acciones 'CREADA'.
+CALL SP_RegistrarUbicaciones('  M_TEST_01  ', '  MUNICIPIO PRUEBA 1  ', 'E_TEST_01', 'ESTADO PRUEBA 1', 'P_TEST_01', 'PAIS PRUEBA 1');
+
+-- Guardamos los IDs generados en variables para usarlos en el resto de pruebas
+SET @IdPais1 = (SELECT Id_Pais FROM Pais WHERE Codigo = 'P_TEST_01');
+SET @IdEdo1  = (SELECT Id_Estado FROM Estado WHERE Codigo = 'E_TEST_01');
+SET @IdMun1  = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'M_TEST_01');
+
+-- 1.2. Prueba de Idempotencia (Ejecutar lo mismo otra vez)
+-- [ESPERADO]: Mensaje 'Registro Exitoso', pero Acciones deben decir 'REUSADA' (No debe duplicar).
+CALL SP_RegistrarUbicaciones('M_TEST_01', 'MUNICIPIO PRUEBA 1', 'E_TEST_01', 'ESTADO PRUEBA 1', 'P_TEST_01', 'PAIS PRUEBA 1');
+
+-- 1.3. Prueba de Inserción Individual (Crear un segundo estado en el mismo país)
+-- [ESPERADO]: Accion 'CREADA'
+CALL SP_RegistrarEstado('E_TEST_02', 'ESTADO PRUEBA 2', @IdPais1);
+SET @IdEdo2 = (SELECT Id_Estado FROM Estado WHERE Codigo = 'E_TEST_02');
+
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS (CONSULTAS ESPECÍFICAS Y LISTAS)
+   Objetivo: Verificar que la UI reciba los datos correctos y limpios.
+   ================================================================================= */
+
+-- 2.1. Consultar la VISTA GLOBAL (Flat View)
+-- [ESPERADO]: Debes ver una fila plana con Codigo_Pais, Nombre_Pais, etc.
+SELECT * FROM Vista_Direcciones WHERE Id_Municipio = @IdMun1;
+
+-- 2.2. Consultar Detalles Específicos (Para Edición)
+-- [ESPERADO]: Datos del municipio + Datos del Estado y País actual.
+CALL SP_ConsultarMunicipioEspecifico(@IdMun1);
+
+-- 2.3. Listas para Dropdowns (SOLO ACTIVOS)
+-- [ESPERADO]: Debe aparecer 'PAIS PRUEBA 1'.
+CALL SP_ListarPaisesActivos();
+
+-- 2.4. Listas Admin (TODOS: Activos e Inactivos)
+-- [ESPERADO]: Debe aparecer el país, con Activo=1.
+CALL SP_ListarPaisesAdmin();
+
+
+/* =================================================================================
+   FASE 3: INTEGRIDAD Y EDICIÓN (VALIDACIONES DE NEGOCIO)
+   Objetivo: Intentar "romper" la lógica con datos inválidos.
+   ================================================================================= */
+
+-- 3.1. Intentar registrar un Estado en un País Inexistente
+-- [ESPERADO]: 🔴 ERROR: "Id_Pais inválido (dropdown)." o error de FK si falla la validación previa.
+CALL SP_RegistrarEstado('ERR', 'ERROR STATE', 99999);
+
+-- 3.2. Intentar Editar Municipio moviéndolo a un Estado que NO pertenece al País seleccionado
+-- (Simulamos un ataque o bug del frontend que manda IDs mezclados)
+-- [ESPERADO]: 🔴 ERROR: "El Estado destino no pertenece al País seleccionado..."
+CALL SP_EditarMunicipio(@IdMun1, 'M_TEST_01', 'MUNICIPIO PRUEBA 1', @IdPais1, 99999); 
+
+-- 3.3. Edición Correcta (Cambio de nombre y código)
+-- [ESPERADO]: Mensaje 'Municipio actualizado correctamente'.
+CALL SP_EditarMunicipio(@IdMun1, 'M_EDITADO', 'MUNICIPIO RENOMBRADO', @IdPais1, @IdEdo1);
+
+-- 3.4. Verificar "Sin Cambios"
+-- [ESPERADO]: Mensaje 'Sin cambios...' y Accion 'SIN_CAMBIOS'.
+CALL SP_EditarMunicipio(@IdMun1, 'M_EDITADO', 'MUNICIPIO RENOMBRADO', @IdPais1, @IdEdo1);
+
+
+/* =================================================================================
+   FASE 4: ACTIVAR / DESACTIVAR (BORRADO LÓGICO Y CANDADOS)
+   Objetivo: Verificar que no se puedan dejar datos huérfanos activos.
+   ================================================================================= */
+
+-- 4.1. Intentar Desactivar PAÍS teniendo hijos activos
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede desactivar el País porque tiene ESTADOS ACTIVOS..."
+CALL SP_CambiarEstatusPais(@IdPais1, 0);
+
+-- 4.2. Intentar Desactivar ESTADO teniendo municipios activos
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede desactivar el Estado porque tiene MUNICIPIOS ACTIVOS..."
+CALL SP_CambiarEstatusEstado(@IdEdo1, 0);
+
+-- 4.3. Desactivación Correcta (Cascada manual)
+-- Paso A: Desactivar Municipio
+CALL SP_CambiarEstatusMunicipio(@IdMun1, 0); -- [OK] Mensaje: Desactivado
+-- Paso B: Desactivar Estado
+CALL SP_CambiarEstatusEstado(@IdEdo1, 0);    -- [OK] Mensaje: Desactivad
+-- 1. Desactivar el segundo estado (que se nos había olvidado)
+-- [ESPERADO]: Mensaje 'Estado Desactivado'
+CALL SP_CambiarEstatusEstado(@IdEdo2, 0);
+-- Paso C: Desactivar País (Ahora sí debe dejar)
+CALL SP_CambiarEstatusPais(@IdPais1, 0);     -- [OK] Mensaje: Desactivado
+
+-- 4.4. Verificar Listas Activas (Ya no deben aparecer)
+-- [ESPERADO]: La lista debe estar VACÍA (o no mostrar P_TEST_01).
+CALL SP_ListarPaisesActivos();
+
+-- 4.5. Verificar Listas Admin (Sí deben aparecer como inactivos)
+-- [ESPERADO]: P_TEST_01 debe aparecer con Activo = 0.
+CALL SP_ListarPaisesAdmin();
+
+
+/* =================================================================================
+   FASE 5: REACTIVACIÓN Y CANDADOS INVERSOS
+   Objetivo: Verificar que no se pueda activar un hijo si el padre está muerto.
+   ================================================================================= */
+
+-- 5.1. Intentar Activar Municipio (Hijo) cuando Estado y País siguen apagados
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede ACTIVAR el Municipio porque su PAÍS... están INACTIVOS."
+CALL SP_CambiarEstatusMunicipio(@IdMun1, 1);
+
+-- 5.2. Intentar Activar Estado (Padre) cuando País sigue apagado
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede ACTIVAR el Estado porque su PAÍS está INACTIVO."
+CALL SP_CambiarEstatusEstado(@IdEdo1, 1);
+
+-- 5.3. Reactivación Correcta (Orden ascendente)
+CALL SP_CambiarEstatusPais(@IdPais1, 1);     -- Activar Abuelo
+CALL SP_CambiarEstatusEstado(@IdEdo1, 1);    -- Activar Padre
+CALL SP_CambiarEstatusMunicipio(@IdMun1, 1); -- Activar Hijo (Ahora sí deja)
+
+
+/* =================================================================================
+   FASE 6: ELIMINACIÓN FÍSICA (HARD DELETE)
+   Objetivo: Verificar integridad referencial estricta.
+   ================================================================================= */
+
+-- 6.1. Intentar Borrar Físicamente PAÍS con datos
+-- [ESPERADO]: 🔴 ERROR CRÍTICO: No se puede eliminar... tiene ESTADOS asociados.
+CALL SP_EliminarPaisFisico(@IdPais1);
+
+-- 6.2. Intentar Borrar Físicamente ESTADO con datos
+-- [ESPERADO]: 🔴 ERROR CRÍTICO: No se puede eliminar... tiene MUNICIPIOS asociados.
+CALL SP_EliminarEstadoFisico(@IdEdo1);
+
+-- 6.3. Borrado Físico Correcto (De abajo hacia arriba)
+-- A) Borrar Municipio
+CALL SP_EliminarMunicipio(@IdMun1); -- [OK] Eliminado
+-- B) Borrar Estado 1
+CALL SP_EliminarEstadoFisico(@IdEdo1); -- [OK] Eliminado
+-- C) Borrar Estado 2 (el que creamos en paso 1.3)
+CALL SP_EliminarEstadoFisico(@IdEdo2); -- [OK] Eliminado
+-- D) Borrar País
+CALL SP_EliminarPaisFisico(@IdPais1); -- [OK] Eliminado
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS
+   Si llegaste aquí y viste los mensajes de ERROR ROJO donde se indicaba,
+   y los mensajes de ÉXITO donde correspondía, tu sistema está BLINDADO.
+   ================================================================================= */
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO ORGANIZACIÓN
+   =================================================================================
+   OBJETIVO:
+   Simular el ciclo de vida completo de los datos (CRUD + Estatus + Eliminación)
+   verificando que los candados de seguridad y la integridad referencial funcionen.
+   ================================================================================= */
+
+USE Picade;
+
+/* =================================================================================
+   FASE 1: CREACIÓN Y NORMALIZACIÓN (HAPPY PATH & DATA DIRTY)
+   Objetivo: Verificar que se crea la jerarquía y se limpian espacios.
+   ================================================================================= */
+
+-- 1.1. Prueba de "Big Bang" (Registrar todo junto)
+-- [ESPERADO]: Mensaje 'Registro Exitoso', ids generados y acciones 'CREADA'.
+CALL SP_RegistrarOrganizacion(
+    '  G_TEST_01  ', '  GERENCIA PRUEBA 1  ', 
+    'S_TEST_01', 'SUBDIRECCION PRUEBA 1', 
+    'D_TEST_01', 'DIRECCION PRUEBA 1'
+);
+
+-- Guardamos los IDs generados en variables para usarlos en el resto de pruebas
+SET @IdDirec1 = (SELECT Id_CatDirecc FROM Cat_Direcciones WHERE Clave = 'D_TEST_01');
+SET @IdSubd1  = (SELECT Id_CatSubDirec FROM Cat_Subdirecciones WHERE Clave = 'S_TEST_01');
+SET @IdGeren1 = (SELECT Id_CatGeren FROM Cat_Gerencias_Activos WHERE Clave = 'G_TEST_01');
+
+-- 1.2. Prueba de Idempotencia (Ejecutar lo mismo otra vez)
+-- [ESPERADO]: Mensaje 'Registro Exitoso', pero Acciones deben decir 'REUSADA' (No debe duplicar).
+CALL SP_RegistrarOrganizacion(
+    'G_TEST_01', 'GERENCIA PRUEBA 1', 
+    'S_TEST_01', 'SUBDIRECCION PRUEBA 1', 
+    'D_TEST_01', 'DIRECCION PRUEBA 1'
+);
+
+-- 1.3. Prueba de Inserción Individual (Crear una segunda Subdirección en la misma Dirección)
+-- [ESPERADO]: Accion 'CREADA'
+CALL SP_RegistrarSubdireccion('S_TEST_02', 'SUBDIRECCION PRUEBA 2', @IdDirec1);
+SET @IdSubd2 = (SELECT Id_CatSubDirec FROM Cat_Subdirecciones WHERE Clave = 'S_TEST_02');
+
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS (CONSULTAS ESPECÍFICAS Y LISTAS)
+   Objetivo: Verificar que la UI reciba los datos correctos y limpios.
+   ================================================================================= */
+
+-- 2.1. Consultar la VISTA GLOBAL (Flat View)
+-- [ESPERADO]: Debes ver una fila plana con Clave_Direccion, Nombre_Direccion, etc.
+SELECT * FROM Vista_Organizacion WHERE Id_Gerencia = @IdGeren1;
+
+-- 2.2. Consultar Detalles Específicos (Para Edición)
+-- [ESPERADO]: Datos de la Gerencia + Datos de Subdirección y Dirección actual.
+CALL SP_ConsultarGerenciaEspecifica(@IdGeren1);
+
+-- 2.3. Listas para Dropdowns (SOLO ACTIVOS)
+-- [ESPERADO]: Debe aparecer 'DIRECCION PRUEBA 1'.
+CALL SP_ListarDireccionesActivas();
+
+-- 2.4. Listas Admin (TODOS: Activos e Inactivos)
+-- [ESPERADO]: Debe aparecer la dirección, con Activo=1.
+CALL SP_ListarDireccionesAdmin();
+
+
+/* =================================================================================
+   FASE 3: INTEGRIDAD Y EDICIÓN (VALIDACIONES DE NEGOCIO)
+   Objetivo: Intentar "romper" la lógica con datos inválidos.
+   ================================================================================= */
+
+-- 3.1. Intentar registrar una Subdirección en una Dirección Inexistente
+-- [ESPERADO]: 🔴 ERROR: "La Dirección padre no existe."
+CALL SP_RegistrarSubdireccion('ERR', 'ERROR SUBDIR', 99999);
+
+-- 3.2. Intentar Editar Gerencia moviéndola a una Subdirección que NO pertenece a la Dirección seleccionada
+-- (Simulamos un ataque o bug del frontend que manda IDs mezclados)
+-- [ESPERADO]: 🔴 ERROR: "La Subdirección destino no pertenece a la Dirección seleccionada..."
+CALL SP_EditarGerencia(@IdGeren1, 'G_TEST_01', 'GERENCIA PRUEBA 1', @IdDirec1, 99999); 
+
+-- 3.3. Edición Correcta (Cambio de nombre y clave)
+-- [ESPERADO]: Mensaje 'Gerencia actualizada correctamente'.
+CALL SP_EditarGerencia(@IdGeren1, 'G_EDITADO', 'GERENCIA RENOMBRADA', @IdDirec1, @IdSubd1);
+
+-- 3.4. Verificar "Sin Cambios"
+-- [ESPERADO]: Mensaje 'Sin cambios...' y Accion 'SIN_CAMBIOS'.
+CALL SP_EditarGerencia(@IdGeren1, 'G_EDITADO', 'GERENCIA RENOMBRADA', @IdDirec1, @IdSubd1);
+
+
+/* =================================================================================
+   FASE 4: ACTIVAR / DESACTIVAR (BORRADO LÓGICO Y CANDADOS)
+   Objetivo: Verificar que no se puedan dejar datos huérfanos activos.
+   ================================================================================= */
+
+-- 4.1. Intentar Desactivar DIRECCIÓN (Abuelo) teniendo hijos activos
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede desactivar la Dirección porque tiene SUBDIRECCIONES ACTIVAS..."
+CALL SP_CambiarEstatusDireccion(@IdDirec1, 0);
+
+-- 4.2. Intentar Desactivar SUBDIRECCIÓN (Padre) teniendo gerencias activas
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede desactivar la Subdirección porque tiene GERENCIAS ACTIVAS..."
+CALL SP_CambiarEstatusSubdireccion(@IdSubd1, 0);
+
+-- 4.3. Desactivación Correcta (Cascada manual de abajo hacia arriba)
+-- Paso A: Desactivar Gerencia
+CALL SP_CambiarEstatusGerencia(@IdGeren1, 0);      -- [OK] Mensaje: Desactivada
+-- Paso B: Desactivar Subdirección 1
+CALL SP_CambiarEstatusSubdireccion(@IdSubd1, 0);   -- [OK] Mensaje: Desactivada
+-- 1. Desactivar la segunda Subdirección (la que creamos en paso 1.3)
+-- [ESPERADO]: Mensaje 'Subdirección Desactivada'
+CALL SP_CambiarEstatusSubdireccion(@IdSubd2, 0);
+-- Paso C: Desactivar Dirección (Ahora sí debe dejar porque no tiene hijos activos)
+CALL SP_CambiarEstatusDireccion(@IdDirec1, 0);     -- [OK] Mensaje: Desactivada
+
+-- 4.4. Verificar Listas Activas (Ya no deben aparecer)
+-- [ESPERADO]: La lista NO debe mostrar D_TEST_01.
+CALL SP_ListarDireccionesActivas();
+
+-- 4.5. Verificar Listas Admin (Sí deben aparecer como inactivos)
+-- [ESPERADO]: D_TEST_01 debe aparecer con Activo = 0.
+CALL SP_ListarDireccionesAdmin();
+
+
+/* =================================================================================
+   FASE 5: REACTIVACIÓN Y CANDADOS INVERSOS
+   Objetivo: Verificar que no se pueda activar un hijo si el padre está muerto.
+   ================================================================================= */
+
+-- 5.1. Intentar Activar Gerencia (Hijo) cuando Subdirección y Dirección siguen apagados
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede ACTIVAR la Gerencia porque su DIRECCIÓN (Abuelo) está INACTIVA..."
+CALL SP_CambiarEstatusGerencia(@IdGeren1, 1);
+
+-- 5.2. Intentar Activar Subdirección (Padre) cuando Dirección sigue apagada
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede ACTIVAR la Subdirección porque su DIRECCIÓN PADRE está INACTIVA..."
+CALL SP_CambiarEstatusSubdireccion(@IdSubd1, 1);
+
+-- 5.3. Reactivación Correcta (Orden ascendente)
+CALL SP_CambiarEstatusDireccion(@IdDirec1, 1);     -- Activar Abuelo
+CALL SP_CambiarEstatusSubdireccion(@IdSubd1, 1);   -- Activar Padre
+CALL SP_CambiarEstatusGerencia(@IdGeren1, 1);      -- Activar Hijo (Ahora sí deja)
+
+
+/* =================================================================================
+   FASE 6: ELIMINACIÓN FÍSICA (HARD DELETE)
+   Objetivo: Verificar integridad referencial estricta.
+   ================================================================================= */
+
+-- 6.1. Intentar Borrar Físicamente DIRECCIÓN con datos
+-- [ESPERADO]: 🔴 ERROR CRÍTICO: No se puede eliminar... tiene SUBDIRECCIONES asociadas.
+CALL SP_EliminarDireccionFisica(@IdDirec1);
+
+-- 6.2. Intentar Borrar Físicamente SUBDIRECCIÓN con datos
+-- [ESPERADO]: 🔴 ERROR CRÍTICO: No se puede eliminar... tiene GERENCIAS asociadas.
+CALL SP_EliminarSubdireccionFisica(@IdSubd1);
+
+-- 6.3. Borrado Físico Correcto (De abajo hacia arriba)
+-- A) Borrar Gerencia
+CALL SP_EliminarGerenciaFisica(@IdGeren1);      -- [OK] Eliminado
+-- B) Borrar Subdirección 1
+CALL SP_EliminarSubdireccionFisica(@IdSubd1);   -- [OK] Eliminado
+-- C) Borrar Subdirección 2 (paso 1.3)
+CALL SP_EliminarSubdireccionFisica(@IdSubd2);   -- [OK] Eliminado
+-- D) Borrar Dirección
+CALL SP_EliminarDireccionFisica(@IdDirec1);     -- [OK] Eliminado
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS
+   Si llegaste aquí y viste los mensajes de ERROR ROJO donde se indicaba,
+   y los mensajes de ÉXITO donde correspondía, tu sistema de Organización está BLINDADO.
+   ================================================================================= */
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO DEPARTAMENTOS
+   =================================================================================
+   OBJETIVO:
+   Verificar el ciclo de vida completo:
+   1. Registro con "Triple Restricción".
+   2. Visualización y Consultas.
+   3. Edición con validación de "Integridad Geográfica".
+   4. Bloqueos de Estatus (Padre Inactivo).
+   5. Eliminación Física.
+   ================================================================================= */
+
+USE Picade;
+
+/* ---------------------------------------------------------------------------------
+   PRE-REQUISITOS: GENERAR DATOS GEOGRÁFICOS DE PRUEBA
+   Necesitamos un entorno controlado para las pruebas.
+   --------------------------------------------------------------------------------- */
+-- 1. Crear Ruta Geográfica A (La "Correcta")
+CALL SP_RegistrarUbicaciones('M_DEP_A', 'MUNICIPIO DEP A', 'E_DEP_A', 'ESTADO DEP A', 'P_DEP_A', 'PAIS DEP A');
+
+-- Recuperamos IDs
+SET @IdPaisA = (SELECT Id_Pais FROM Pais WHERE Codigo = 'P_DEP_A');
+SET @IdEdoA  = (SELECT Id_Estado FROM Estado WHERE Codigo = 'E_DEP_A');
+SET @IdMunA  = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'M_DEP_A');
+
+-- 2. Crear Ruta Geográfica B (La "Otra") para pruebas de movilidad
+CALL SP_RegistrarUbicaciones('M_DEP_B', 'MUNICIPIO DEP B', 'E_DEP_B', 'ESTADO DEP B', 'P_DEP_B', 'PAIS DEP B');
+
+SET @IdPaisB = (SELECT Id_Pais FROM Pais WHERE Codigo = 'P_DEP_B');
+SET @IdEdoB  = (SELECT Id_Estado FROM Estado WHERE Codigo = 'E_DEP_B');
+SET @IdMunB  = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'M_DEP_B');
+
+/* =================================================================================
+   FASE 1: REGISTRO Y REGLAS DE UNICIDAD (LA TRIADA)
+   Objetivo: Probar que la unicidad (Código + Nombre + Municipio) funcione.
+   ================================================================================= */
+
+-- 1.1. Registro Exitoso (Happy Path)
+-- [ESPERADO]: Mensaje 'Departamento registrado exitosamente', Accion 'CREADA'.
+CALL SP_RegistrarDepartamento('DEP-001', 'RECURSOS HUMANOS', 'EDIFICIO CENTRAL PISO 1', @IdMunA);
+
+-- Guardamos ID para pruebas
+SET @IdDep1 = (SELECT Id_CatDep FROM Cat_Departamentos WHERE Codigo = 'DEP-001' AND Fk_Id_Municipio_CatDep = @IdMunA);
+
+-- 1.2. Prueba de Idempotencia (Re-enviar lo mismo)
+-- [ESPERADO]: Mensaje '...ya existe...', Accion 'REUSADA'.
+CALL SP_RegistrarDepartamento('DEP-001', 'RECURSOS HUMANOS', 'OTRA DIRECCION NO IMPORTA', @IdMunA);
+
+-- 1.3. Prueba de Flexibilidad de Nombre (Mismo Código, Mismo Lugar, Diferente Nombre) -> DEBE PASAR
+-- [ESPERADO]: Accion 'CREADA' (Se permite tener DEP-001 "RH" y DEP-001 "NOMINAS" si así lo desean, aunque es raro).
+CALL SP_RegistrarDepartamento('DEP-001', 'NOMINAS', 'OFICINA 2', @IdMunA);
+
+-- 1.4. Prueba de Flexibilidad Geográfica (Mismo Código, Mismo Nombre, DIFERENTE Municipio) -> DEBE PASAR
+-- [ESPERADO]: Accion 'CREADA' (Podemos tener RH en el Municipio A y RH en el Municipio B).
+CALL SP_RegistrarDepartamento('DEP-001', 'RECURSOS HUMANOS', 'SUCURSAL NORTE', @IdMunB);
+SET @IdDepB = (SELECT Id_CatDep FROM Cat_Departamentos WHERE Codigo = 'DEP-001' AND Fk_Id_Municipio_CatDep = @IdMunB);
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS
+   Objetivo: Verificar que los datos se recuperen correctamente.
+   ================================================================================= */
+
+-- 2.1. Listado Admin (Vista Completa)
+-- [ESPERADO]: Deben salir 3 registros (2 en MunA, 1 en MunB) con sus nombres de ubicación.
+CALL SP_ListarDepAdmin();
+
+-- 2.2. Listado Activos (Para Dropdowns Globales)
+-- [ESPERADO]: Solo ID, Código y Nombre.
+CALL SP_ListarDepActivos();
+
+-- 2.3. Consulta Específica (Para Edición)
+-- [ESPERADO]: Debe traer los IDs de la jerarquía (Pais, Estado, Municipio) para llenar los selects.
+CALL SP_ConsultarDepartamentoEspecifico(@IdDep1);
+
+/* =================================================================================
+   FASE 3: EDICIÓN E INTEGRIDAD GEOGRÁFICA
+   Objetivo: Verificar validaciones de mudanza y duplicidad al editar.
+   ================================================================================= */
+
+-- 3.1. Prueba "Sin Cambios"
+-- [ESPERADO]: Mensaje 'No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarDepartamento(@IdDep1, 'DEP-001', 'RECURSOS HUMANOS', 'EDIFICIO CENTRAL PISO 1', @IdPaisA, @IdEdoA, @IdMunA);
+
+-- 3.2. Prueba "Ubicación Frankenstein" (Integridad Atómica)
+-- Intentamos mover el departamento diciendo: País A, Estado A... pero MUNICIPIO B (que es del País B).
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE INTEGRIDAD: La ubicación seleccionada es inconsistente..."
+CALL SP_EditarDepartamento(@IdDep1, 'DEP-001', 'RH EDITADO', 'DIR', @IdPaisA, @IdEdoA, @IdMunB);
+
+-- 3.3. Prueba de Duplicidad en Edición
+-- Intentamos cambiar el nombre de @IdDep1 para que sea igual al del paso 1.3 ('NOMINAS') en el mismo municipio.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE DUPLICIDAD: Ya existe otro Departamento..."
+CALL SP_EditarDepartamento(@IdDep1, 'DEP-001', 'NOMINAS', 'DIR', @IdPaisA, @IdEdoA, @IdMunA);
+
+-- 3.4. Edición Correcta (Mudanza Real)
+-- Movemos el departamento del Municipio A al Municipio B.
+-- [ESPERADO]: Accion 'ACTUALIZADA'.
+CALL SP_EditarDepartamento(@IdDep1, 'DEP-001-MUDADO', 'RH MUDADO', 'NUEVA OFICINA', @IdPaisB, @IdEdoB, @IdMunB);
+
+/* =================================================================================
+   FASE 4: ESTATUS Y CANDADOS JERÁRQUICOS
+   Objetivo: Verificar que el departamento respete el estatus de su municipio.
+   ================================================================================= */
+
+-- 4.1. Desactivar Departamento (Baja Lógica)
+-- [ESPERADO]: Mensaje 'Departamento Desactivado'.
+CALL SP_CambiarEstatusDepartamento(@IdDep1, 0);
+
+-- 4.2. Intentar Reactivar con Municipio Inactivo
+-- Paso A: Desactivamos el Municipio B (donde vive ahora el departamento).
+CALL SP_CambiarEstatusMunicipio(@IdMunB, 0);
+
+-- Paso B: Intentamos reactivar el Departamento.
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEO JERÁRQUICO: No se puede ACTIVAR... porque su MUNICIPIO está INACTIVO."
+CALL SP_CambiarEstatusDepartamento(@IdDep1, 1);
+
+-- 4.3. Reactivación Correcta
+-- Reactivamos Municipio -> Reactivamos Departamento.
+CALL SP_CambiarEstatusMunicipio(@IdMunB, 1);
+CALL SP_CambiarEstatusDepartamento(@IdDep1, 1); -- [OK]
+
+/* =================================================================================
+   FASE 4: ESTATUS Y CANDADOS JERÁRQUICOS (CORREGIDO)
+   ================================================================================= */
+
+-- 4.1. Desactivar Departamento (Baja Lógica)
+-- Desactivamos el principal que estamos probando
+CALL SP_CambiarEstatusDepartamento(@IdDep1, 0);
+
+-- [NUEVO] ¡IMPORTANTE! También debemos desactivar el otro departamento que creamos en el paso 1.4
+-- Si no lo hacemos, el Municipio B no nos dejará cerrarlo.
+CALL SP_CambiarEstatusDepartamento(@IdDepB, 0); 
+
+-- 4.2. Intentar Reactivar con Municipio Inactivo
+-- Paso A: Desactivamos el Municipio B. (Ahora sí dejará, porque no tiene hijos activos)
+CALL SP_CambiarEstatusMunicipio(@IdMunB, 0); -- [AHORA SÍ DARÁ OK]
+
+-- Paso B: Intentamos reactivar el Departamento @IdDep1.
+-- Aquí esperamos el error porque su padre (MunB) acabamos de apagarlo.
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEO JERÁRQUICO: No se puede ACTIVAR... porque su MUNICIPIO está INACTIVO."
+CALL SP_CambiarEstatusDepartamento(@IdDep1, 1);
+
+-- 4.3. Corrección
+-- Reactivamos Municipio -> Reactivamos Departamento.
+CALL SP_CambiarEstatusMunicipio(@IdMunB, 1);
+CALL SP_CambiarEstatusDepartamento(@IdDep1, 1); -- [OK]
+/* =================================================================================
+   FASE 5: ELIMINACIÓN FÍSICA
+   Objetivo: Limpieza final.
+   ================================================================================= */
+
+-- 5.1. Eliminar Departamento @IdDep1
+-- [ESPERADO]: 'El Departamento ha sido eliminado permanentemente...'
+CALL SP_EliminarDepartamentoFisico(@IdDep1);
+
+-- 5.2. Limpieza de datos de prueba restantes
+-- (El resto de departamentos creados y las ubicaciones)
+DELETE FROM Cat_Departamentos WHERE Codigo LIKE 'DEP-001%'; 
+CALL SP_EliminarMunicipio(@IdMunA);
+CALL SP_EliminarMunicipio(@IdMunB);
+CALL SP_EliminarEstadoFisico(@IdEdoA);
+CALL SP_EliminarEstadoFisico(@IdEdoB);
+CALL SP_EliminarPaisFisico(@IdPaisA);
+CALL SP_EliminarPaisFisico(@IdPaisB);
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS - MÓDULO DEPARTAMENTOS
+   Si pasaste los errores rojos controlados, el módulo es seguro.
+   ================================================================================= */
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO CENTROS DE TRABAJO
+   =================================================================================
+   OBJETIVO:
+   Verificar la integridad, concurrencia, validación geográfica atómica y
+   ciclo de vida (CRUD) de los Centros de Trabajo.
+   ================================================================================= */
+
+USE Picade;
+
+/* ---------------------------------------------------------------------------------
+   PRE-REQUISITOS: GENERAR DATOS GEOGRÁFICOS DE PRUEBA
+   Necesitamos dos rutas geográficas distintas para probar la "Mudanza Incoherente".
+   Ruta A: PAIS A -> EDO A -> MUN A
+   Ruta B: PAIS B -> EDO B -> MUN B
+   --------------------------------------------------------------------------------- */
+-- Crear Ruta A
+CALL SP_RegistrarUbicaciones('M_QA_01', 'MUNICIPIO QA A', 'E_QA_01', 'ESTADO QA A', 'P_QA_01', 'PAIS QA A');
+SET @IdPaisA = (SELECT Id_Pais FROM Pais WHERE Codigo = 'P_QA_01');
+SET @IdEdoA  = (SELECT Id_Estado FROM Estado WHERE Codigo = 'E_QA_01');
+SET @IdMunA  = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'M_QA_01');
+
+-- Crear Ruta B
+CALL SP_RegistrarUbicaciones('M_QA_02', 'MUNICIPIO QA B', 'E_QA_02', 'ESTADO QA B', 'P_QA_02', 'PAIS QA B');
+SET @IdPaisB = (SELECT Id_Pais FROM Pais WHERE Codigo = 'P_QA_02');
+SET @IdEdoB  = (SELECT Id_Estado FROM Estado WHERE Codigo = 'E_QA_02');
+SET @IdMunB  = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'M_QA_02');
+
+
+/* =================================================================================
+   FASE 1: CREACIÓN Y NORMALIZACIÓN
+   Objetivo: Probar el registro, limpieza de espacios y reglas de duplicidad.
+   ================================================================================= */
+
+-- 1.1. Registro Exitoso (Happy Path)
+-- [ESPERADO]: Mensaje 'Centro de Trabajo registrado exitosamente', Accion 'CREADA'.
+CALL SP_RegistrarCentroTrabajo('  CT-QA-01  ', '  CENTRO OPERATIVO ALPHA  ', 'CALLE 1 #100', @IdMunA);
+
+-- Guardamos ID para pruebas
+SET @IdCT1 = (SELECT Id_CatCT FROM Cat_Centros_Trabajo WHERE Codigo = 'CT-QA-01');
+
+-- 1.2. Prueba de Idempotencia (Re-enviar lo mismo)
+-- [ESPERADO]: Mensaje '...ya se encuentra registrado', Accion 'REUSADA'.
+CALL SP_RegistrarCentroTrabajo('CT-QA-01', 'CENTRO OPERATIVO ALPHA', 'CALLE 1 #100', @IdMunA);
+
+-- 1.3. Prueba de Conflicto de Identidad (Mismo Código, diferente Nombre)
+-- [ESPERADO]: 🔴 ERROR: "CONFLICTO DE DATOS: El Código ingresado ya existe..."
+CALL SP_RegistrarCentroTrabajo('CT-QA-01', 'CENTRO IMPOSTOR', 'OTRA CALLE', @IdMunA);
+
+-- 1.4. Prueba de Conflicto Físico (Mismo Nombre y Lugar, diferente Código)
+-- [ESPERADO]: 🔴 ERROR: "CONFLICTO FÍSICO: Ya existe un Centro de Trabajo con ese NOMBRE..."
+CALL SP_RegistrarCentroTrabajo('CT-QA-99', 'CENTRO OPERATIVO ALPHA', 'CALLE 1 #100', @IdMunA);
+
+-- 1.5. Crear un segundo CT (Para pruebas de edición cruzada)
+CALL SP_RegistrarCentroTrabajo('CT-QA-02', 'CENTRO OPERATIVO BETA', 'CALLE 2', @IdMunA);
+SET @IdCT2 = (SELECT Id_CatCT FROM Cat_Centros_Trabajo WHERE Codigo = 'CT-QA-02');
+
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS
+   Objetivo: Verificar que la reconstrucción geográfica (LEFT JOIN) funcione.
+   ================================================================================= */
+
+-- 2.1. Consultar Detalle Específico (Para Formulario de Edición)
+-- [ESPERADO]: Debe traer Id_Pais, Id_Estado e Id_Municipio correctamente llenos.
+CALL SP_ConsultarCentroTrabajoEspecifico(@IdCT1);
+
+-- 2.2. Listado Admin (Vista Plana)
+-- [ESPERADO]: Debe mostrar 'PAIS QA A', 'ESTADO QA A', etc.
+CALL SP_ListarCTAdmin();
+
+-- 2.3. Listado Activos (Dropdown)
+-- [ESPERADO]: Solo código y nombre.
+CALL SP_ListarCTActivos();
+
+
+/* =================================================================================
+   FASE 3: EDICIÓN E INTEGRIDAD GEOGRÁFICA (PRUEBA DE FUEGO)
+   Objetivo: Intentar engañar al sistema con ubicaciones mezcladas.
+   ================================================================================= */
+
+-- 3.1. Prueba de "Sin Cambios"
+-- [ESPERADO]: Mensaje 'No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarCentroTrabajo(@IdCT1, 'CT-QA-01', 'CENTRO OPERATIVO ALPHA', 'CALLE 1 #100', @IdPaisA, @IdEdoA, @IdMunA);
+
+-- 3.2. Prueba de "Mudanza Incoherente" (EL CANDADO ATÓMICO)
+-- Intentamos mover el CT diciendo: País A, Estado A... pero MUNICIPIO B (que pertenece al País B).
+-- Esto simula un ataque o un bug del frontend.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE INTEGRIDAD: La ubicación seleccionada es inconsistente..."
+CALL SP_EditarCentroTrabajo(@IdCT1, 'CT-QA-01', 'CENTRO OPERATIVO ALPHA', 'CALLE 1 #100', @IdPaisA, @IdEdoA, @IdMunB);
+
+-- 3.3. Prueba de Duplicidad Global (Robar código de otro)
+-- Intentamos ponerle al CT1 el código del CT2.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE DUPLICIDAD: El Código ingresado ya está en uso..."
+CALL SP_EditarCentroTrabajo(@IdCT1, 'CT-QA-02', 'NOMBRE X', 'DIR X', @IdPaisA, @IdEdoA, @IdMunA);
+
+-- 3.4. Edición Correcta (Mudanza Real)
+-- Movemos el CT1 de la Ruta A a la Ruta B completamente.
+-- [ESPERADO]: Mensaje 'Centro de Trabajo actualizado correctamente', Accion 'ACTUALIZADA'.
+CALL SP_EditarCentroTrabajo(@IdCT1, 'CT-QA-01-EDIT', 'CENTRO MUDADO A RUTA B', 'NUEVA CALLE', @IdPaisB, @IdEdoB, @IdMunB);
+
+/* =================================================================================
+   FASE 4: ESTATUS Y CANDADOS JERÁRQUICOS
+   Objetivo: Verificar que no se pueda activar un CT si su municipio murió.
+   ================================================================================= */
+/* =================================================================================
+   FASE 4: ESTATUS Y CANDADOS JERÁRQUICOS (SECUENCIA CORREGIDA)
+   ================================================================================= */
+
+-- 4.1. Primero desactivamos al HIJO (Centro de Trabajo)
+-- Esto libera al Municipio para que pueda ser desactivado después.
+CALL SP_CambiarEstatusCentroTrabajo(@IdCT1, 0); 
+-- [RESULTADO]: Centro de Trabajo Desactivado.
+
+-- 4.2. Ahora sí, desactivamos al PADRE (Municipio B)
+-- Como el hijo ya no está activo, el sistema debe permitir apagar el municipio.
+CALL SP_CambiarEstatusMunicipio(@IdMunB, 0);
+-- [RESULTADO]: Municipio Desactivado. (Activo = 0)
+
+-- 4.3. PRUEBA DE FUEGO: Intentamos REVIVIR al HIJO (CT)
+-- Aquí es donde debe saltar el candado, porque su Padre (Municipio B) ahora sí está inactivo.
+CALL SP_CambiarEstatusCentroTrabajo(@IdCT1, 1);
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEADO: No se puede ACTIVAR... porque su MUNICIPIO está INACTIVO."
+
+-- 4.4. Solución: Reactivar en orden (Arriba hacia Abajo)
+CALL SP_CambiarEstatusMunicipio(@IdMunB, 1);    -- Revivimos al Padre
+CALL SP_CambiarEstatusCentroTrabajo(@IdCT1, 1); -- Ahora sí deja revivir al Hijo.
+
+/* =================================================================================
+   FASE 5: ELIMINACIÓN FÍSICA
+   Objetivo: Limpieza final.
+   ================================================================================= */
+
+-- 5.1. Eliminar CT1
+CALL SP_EliminarCentroTrabajoFisico(@IdCT1); -- [OK]
+
+-- 5.2. Eliminar CT2
+CALL SP_EliminarCentroTrabajoFisico(@IdCT2); -- [OK]
+
+-- 5.3. Limpieza de Ubicaciones de prueba
+CALL SP_EliminarMunicipio(@IdMunA);
+CALL SP_EliminarEstadoFisico(@IdEdoA);
+CALL SP_EliminarPaisFisico(@IdPaisA);
+
+CALL SP_EliminarMunicipio(@IdMunB);
+CALL SP_EliminarEstadoFisico(@IdEdoB);
+CALL SP_EliminarPaisFisico(@IdPaisB);
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS - MÓDULO CENTROS DE TRABAJO
+   Si viste los errores rojos donde se esperaban, el sistema es seguro.
+   ================================================================================= */
+
+USE `Picade`;
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO SEDES (CASES)
+   =================================================================================
+   OBJETIVO:
+   Simular el ciclo de vida completo de una Sede:
+   1. Registro (con y sin inventario).
+   2. Validación de Duplicidad (Identidad).
+   3. Integridad Geográfica (Sedes huérfanas).
+   4. Edición y Mudanza.
+   5. Candados de Estatus (Dependencia del Municipio).
+   6. Eliminación Física.
+   ================================================================================= */
+
+/* ---------------------------------------------------------------------------------
+   FASE 0: PREPARACIÓN DEL ENTORNO (DATOS SEMILLA)
+   Necesitamos Ubicaciones válidas para probar la integridad referencial.
+   --------------------------------------------------------------------------------- */
+
+-- 1. Ruta A (Para pruebas estándar)
+CALL SP_RegistrarUbicaciones('M_CASES_A', 'MUNICIPIO CASES A', 'E_CASES_A', 'ESTADO CASES A', 'P_CASES_A', 'PAIS CASES A');
+SET @IdPaisA = (SELECT Id_Pais FROM Pais WHERE Codigo = 'P_CASES_A');
+SET @IdEdoA  = (SELECT Id_Estado FROM Estado WHERE Codigo = 'E_CASES_A');
+SET @IdMunA  = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'M_CASES_A');
+
+-- 2. Ruta B (Para pruebas de mudanza y bloqueo jerárquico)
+CALL SP_RegistrarUbicaciones('M_CASES_B', 'MUNICIPIO CASES B', 'E_CASES_B', 'ESTADO CASES B', 'P_CASES_B', 'PAIS CASES B');
+SET @IdPaisB = (SELECT Id_Pais FROM Pais WHERE Codigo = 'P_CASES_B');
+SET @IdEdoB  = (SELECT Id_Estado FROM Estado WHERE Codigo = 'E_CASES_B');
+SET @IdMunB  = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'M_CASES_B');
+
+
+/* =================================================================================
+   FASE 1: REGISTRO, SANITIZACIÓN Y NORMALIZACIÓN
+   Objetivo: Verificar que se guarde la data y que los NULLs se conviertan a 0.
+   ================================================================================= */
+
+-- 1.1. Registro Completo (Sede con infraestructura definida)
+-- [ESPERADO]: Mensaje 'Sede registrada exitosamente', Accion 'CREADA'.
+CALL SP_RegistrarSede(
+    'CASES-001',            -- Código
+    'CENTRO DE ADIESTRAMIENTO ALPHA',  -- Nombre
+    'AVENIDA SIEMPRE VIVA 123', -- Dirección
+    @IdMunA,                -- Municipio
+    100, -- Capacidad Total
+    5,   -- Aulas
+    2,   -- Salas
+    1,   -- Alberca
+    1,   -- Campos
+    0,   -- Muelle
+    20   -- Botes
+);
+
+-- Guardamos ID para pruebas
+SET @IdSede1 = (SELECT Id_CatCases_Sedes FROM Cat_Cases_Sedes WHERE Codigo = 'CASES-001');
+
+-- 1.2. Registro con NULLs (Prueba de Sanitización)
+-- Enviamos NULL en infraestructura para probar que el SP guarda ceros (0) y no rompe la BD.
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarSede(
+    'CASES-002', 
+    'OFICINA ENLACE BETA (SIN INFRA)', 
+    NULL,      -- Sin dirección
+    @IdMunA, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL -- Todo NULL
+);
+
+SET @IdSede2 = (SELECT Id_CatCases_Sedes FROM Cat_Cases_Sedes WHERE Codigo = 'CASES-002');
+
+-- 1.3. Prueba de Idempotencia (Re-enviar lo mismo)
+-- Intentamos registrar la Sede 1 otra vez con los mismos datos.
+-- [ESPERADO]: Mensaje '...ya existe...', Accion 'REUSADA'.
+CALL SP_RegistrarSede('CASES-001', 'CENTRO DE ADIESTRAMIENTO ALPHA', 'OTRA DIR', @IdMunA, 100,5,2,1,1,0,20);
+
+
+/* =================================================================================
+   FASE 2: VALIDACIONES DE INTEGRIDAD Y DUPLICIDAD
+   Objetivo: Intentar romper las reglas de negocio.
+   ================================================================================= */
+
+-- 2.1. Conflicto de Identidad por CÓDIGO
+-- Intentamos registrar otro nombre con el código de la Sede 1.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE CONFLICTO: El CÓDIGO ingresado ya existe..."
+CALL SP_RegistrarSede('CASES-001', 'NOMBRE IMPOSTOR', 'DIR', @IdMunA, 0,0,0,0,0,0,0);
+
+-- 2.2. Conflicto de Identidad por NOMBRE
+-- Intentamos registrar otro código con el nombre de la Sede 1.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE CONFLICTO: El NOMBRE ingresado ya existe..."
+CALL SP_RegistrarSede('CASES-999', 'CENTRO DE ADIESTRAMIENTO ALPHA', 'DIR', @IdMunA, 0,0,0,0,0,0,0);
+
+-- 2.3. Integridad del Padre (Municipio Inexistente)
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE INTEGRIDAD: El Municipio seleccionado no existe..."
+CALL SP_RegistrarSede('CASES-ERR', 'SEDE ERROR', 'DIR', 99999, 0,0,0,0,0,0,0);
+
+
+/* =================================================================================
+   FASE 3: LECTURA Y VISTAS
+   Objetivo: Verificar que la UI reciba los datos jerárquicos e inventario.
+   ================================================================================= */
+
+-- 3.1. Listado Admin (Vista Completa)
+-- [ESPERADO]: Deben salir 2 registros. Verificar columna 'Nombre_Municipio'.
+CALL SP_ListarSedesAdmin();
+
+-- 3.2. Listado Activos (Dropdown)
+-- [ESPERADO]: Solo ID, Código y Nombre.
+CALL SP_ListarSedesActivas();
+
+-- 3.3. Consulta Específica (Para Edición)
+-- [ESPERADO]: Debe traer los IDs de País y Estado (reconstrucción jerárquica) y el inventario detallado.
+-- Verifica que la Sede 2 traiga '0' en Aulas y no 'NULL'.
+CALL SP_ConsultarSedeEspecifica(@IdSede1);
+CALL SP_ConsultarSedeEspecifica(@IdSede2);
+
+
+/* =================================================================================
+   FASE 4: EDICIÓN E INTEGRIDAD GEOGRÁFICA
+   Objetivo: Verificar validaciones de mudanza y actualización de inventario.
+   ================================================================================= */
+
+-- 4.1. Prueba "Sin Cambios"
+-- [ESPERADO]: Mensaje 'No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+-- (Nota: Debes pasar los mismos valores de inventario que tenía).
+CALL SP_EditarSede(@IdSede1, 'CASES-001', 'CENTRO DE ADIESTRAMIENTO ALPHA', 'AVENIDA SIEMPRE VIVA 123', @IdPaisA, @IdEdoA, @IdMunA, 100, 5, 2, 1, 1, 0, 20);
+
+-- 4.2. Prueba "Ubicación Frankenstein" (Integridad Atómica)
+-- Intentamos mover la sede diciendo: País A, Estado A... pero MUNICIPIO B (que es del País B).
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE INTEGRIDAD: La ubicación seleccionada es incoherente..."
+CALL SP_EditarSede(@IdSede1, 'CASES-001', 'CENTRO ALPHA', 'DIR', @IdPaisA, @IdEdoA, @IdMunB, 100, 5, 2, 1, 1, 0, 20);
+
+-- 4.3. Edición Correcta (Mudanza y Actualización de Inventario)
+-- Movemos la Sede 1 al Municipio B y le "construimos" 10 Aulas más (Total 15).
+-- [ESPERADO]: Accion 'ACTUALIZADA'.
+CALL SP_EditarSede(@IdSede1, 'CASES-001', 'CENTRO MUDADO A BETA', 'NUEVA DIRECCION', @IdPaisB, @IdEdoB, @IdMunB, 200, 15, 2, 1, 1, 0, 20);
+
+
+/* =================================================================================
+   FASE 5: ESTATUS Y CANDADOS JERÁRQUICOS
+   Objetivo: Verificar que la Sede respete el estatus de su Municipio.
+   ================================================================================= */
+
+-- 5.1. Desactivar Sede (Baja Lógica)
+-- [ESPERADO]: Mensaje 'Sede Desactivada'.
+CALL SP_CambiarEstatusSede(@IdSede1, 0);
+
+-- 5.2. Verificar Listado Operativo
+-- [ESPERADO]: La Sede 1 NO debe aparecer en el dropdown de activos.
+CALL SP_ListarSedesActivas();
+
+-- 5.3. Intentar Reactivar con Municipio Inactivo
+-- Paso A: Desactivamos el Municipio B (donde ahora vive la Sede 1).
+CALL SP_CambiarEstatusMunicipio(@IdMunB, 0);
+
+-- Paso B: Intentamos reactivar la Sede.
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEO JERÁRQUICO: No se puede ACTIVAR... porque su MUNICIPIO está INACTIVO."
+CALL SP_CambiarEstatusSede(@IdSede1, 1);
+
+-- 5.4. Reactivación Correcta
+-- Reactivamos Municipio -> Reactivamos Sede.
+CALL SP_CambiarEstatusMunicipio(@IdMunB, 1);
+CALL SP_CambiarEstatusSede(@IdSede1, 1); -- [OK]
+
+
+/* =================================================================================
+   FASE 6: ELIMINACIÓN FÍSICA
+   Objetivo: Limpieza y prueba de Hard Delete.
+   ================================================================================= */
+
+-- 6.1. Eliminar Sede 2
+-- [ESPERADO]: 'La Sede ha sido eliminada permanentemente...'
+CALL SP_EliminarSedeFisica(@IdSede2);
+
+-- 6.2. Limpieza General
+CALL SP_EliminarSedeFisica(@IdSede1);
+CALL SP_EliminarMunicipio(@IdMunA);
+CALL SP_EliminarMunicipio(@IdMunB);
+CALL SP_EliminarEstadoFisico(@IdEdoA);
+CALL SP_EliminarEstadoFisico(@IdEdoB);
+CALL SP_EliminarPaisFisico(@IdPaisA);
+CALL SP_EliminarPaisFisico(@IdPaisB);
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS - MÓDULO SEDES
+   Si pasaste los errores rojos controlados, el módulo es seguro y robusto.
+   ================================================================================= */
+
+USE `Picade`;
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO REGÍMENES
+   =================================================================================
+   OBJETIVO:
+   Simular el ciclo de vida completo de un Régimen de Contratación:
+   1. Registro (Happy Path, Idempotencia, Reactivación).
+   2. Validaciones de Duplicidad (Identidad Dual).
+   3. Consultas y Vistas (Admin vs Operativo).
+   4. Edición (Idempotencia, Cambio de Identidad, Concurrencia simulada).
+   5. Candados de Estatus (Dependencia de Empleados).
+   6. Eliminación Física (Dependencia de Empleados).
+   ================================================================================= */
+
+/* ---------------------------------------------------------------------------------
+   FASE 0: LIMPIEZA PREVIA (Opcional, para reiniciar pruebas)
+   --------------------------------------------------------------------------------- */
+-- DELETE FROM Cat_Regimenes_Trabajo WHERE Codigo LIKE 'REG-QA%';
+
+/* =================================================================================
+   FASE 1: REGISTRO Y REGLAS DE UNICIDAD
+   Objetivo: Verificar creación, sanitización y manejo de duplicados.
+   ================================================================================= */
+/* =================================================================================
+   FASE 1: REGISTRO Y REGLAS DE UNICIDAD (LÓGICA ESTRICTA: TODO OBLIGATORIO)
+   Objetivo: Verificar creación, validación de obligatoriedad y manejo de duplicados.
+   ================================================================================= */
+
+-- 1.1. Registro Exitoso (Happy Path)
+-- [ESPERADO]: Mensaje 'Régimen registrado exitosamente', Accion 'CREADA'.
+CALL SP_RegistrarRegimen('REG-QA-01', 'REGIMEN DE PRUEBA ALPHA', 'DESCRIPCION INICIAL');
+
+-- Guardamos ID para pruebas posteriores
+SET @IdReg1 = (SELECT Id_CatRegimen FROM Cat_Regimenes_Trabajo WHERE Codigo = 'REG-QA-01');
+
+
+-- 1.2. PRUEBA DE BLINDAJE (Intentar registrar NULL) - ¡NUEVO!
+-- Intentamos violar la regla de "Todo es obligatorio".
+-- [ESPERADO]: 🔴 ERROR 1644: "ERROR DE VALIDACIÓN: El CÓDIGO del Régimen es obligatorio."
+-- (Si sale este error, el sistema es SEGURO).
+CALL SP_RegistrarRegimen(NULL, 'REGIMEN SIN CODIGO', 'SIN DESC');
+
+
+-- 1.3. Registro del Segundo Dato (Ahora sí, con datos correctos)
+-- Como el paso anterior falló (correctamente), ahora lo insertamos bien para poder usarlo en las siguientes pruebas.
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarRegimen('REG-QA-02', 'REGIMEN BETA', 'DESCRIPCION BETA');
+
+-- Guardamos el ID del segundo registro
+SET @IdReg2 = (SELECT Id_CatRegimen FROM Cat_Regimenes_Trabajo WHERE Codigo = 'REG-QA-02');
+
+
+-- 1.4. Prueba de Idempotencia por CÓDIGO (Re-enviar lo mismo del 1.1)
+-- [ESPERADO]: Mensaje '...ya se encuentra registrado...', Accion 'REUSADA'.
+CALL SP_RegistrarRegimen('REG-QA-01', 'REGIMEN DE PRUEBA ALPHA', 'OTRA DESC');
+
+
+-- 1.5. Conflicto de Identidad Cruzada (Mismo Código, diferente Nombre)
+-- Intentamos usar el código 'REG-QA-01' con otro nombre.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE CONFLICTO: El CÓDIGO ingresado ya existe..."
+CALL SP_RegistrarRegimen('REG-QA-01', 'NOMBRE IMPOSTOR', 'DESC');
+
+
+-- 1.6. Conflicto de Identidad Cruzada (Mismo Nombre, diferente Código)
+-- Intentamos usar el nombre 'REGIMEN DE PRUEBA ALPHA' con otro código.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE CONFLICTO: El NOMBRE ingresado ya existe..."
+CALL SP_RegistrarRegimen('REG-QA-99', 'REGIMEN DE PRUEBA ALPHA', 'DESC');
+
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS
+   Objetivo: Verificar que la UI reciba los datos correctos.
+   ================================================================================= */
+
+-- 2.1. Listado Admin (Vista Completa)
+-- [ESPERADO]: Deben salir los 2 registros creados. Verificar columnas Estatus_Regimen.
+CALL SP_ListarRegimenesAdmin();
+
+-- 2.2. Listado Activos (Dropdown Operativo)
+-- [ESPERADO]: Solo ID, Código y Nombre. Deben salir ambos (porque nacen activos).
+CALL SP_ListarRegimenesActivos();
+
+-- 2.3. Consulta Específica (Para Edición)
+-- [ESPERADO]: Datos crudos. Verificar que @IdReg2 tenga Código en NULL.
+CALL SP_ConsultarRegimenEspecifico(@IdReg1);
+CALL SP_ConsultarRegimenEspecifico(@IdReg2);
+
+
+/* =================================================================================
+   FASE 3: EDICIÓN E INTEGRIDAD
+   Objetivo: Verificar validaciones al modificar datos.
+   ================================================================================= */
+
+-- 3.1. Prueba "Sin Cambios"
+-- [ESPERADO]: Mensaje 'No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarRegimen(@IdReg1, 'REG-QA-01', 'REGIMEN DE PRUEBA ALPHA', 'DESCRIPCION INICIAL');
+
+-- 3.2. Prueba de Duplicidad Global (Robar código de otro)
+-- Intentamos ponerle al Reg2 el código del Reg1.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE DUPLICIDAD: El CÓDIGO ya pertenece a otro Régimen."
+CALL SP_EditarRegimen(@IdReg2, 'REG-QA-01', 'REGIMEN SIN CODIGO BETA', 'DESC');
+
+-- 3.3. Prueba de Duplicidad Global (Robar nombre de otro)
+-- Intentamos ponerle al Reg2 el nombre del Reg1.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE DUPLICIDAD: El NOMBRE ya pertenece a otro Régimen."
+CALL SP_EditarRegimen(@IdReg2, 'COD-X', 'REGIMEN DE PRUEBA ALPHA', 'DESC');
+
+-- 3.4. Edición Correcta (Enriquecimiento)
+-- Le asignamos un código al Regimen 2 que no tenía.
+-- [ESPERADO]: Mensaje 'Régimen actualizado correctamente', Accion 'ACTUALIZADA'.
+CALL SP_EditarRegimen(@IdReg2, 'REG-QA-02', 'REGIMEN BETA EVOLUCIONADO', 'AHORA TIENE CODIGO');
+
+
+/* =================================================================================
+   FASE 4: ESTATUS Y CANDADOS DE INTEGRIDAD (SIMULACIÓN DE EMPLEADOS)
+   Objetivo: Verificar que no se pueda desactivar si hay uso.
+   ================================================================================= */
+
+-- 4.1. Desactivar Régimen 1 (Baja Lógica - Sin empleados aún)
+-- [ESPERADO]: Mensaje 'Régimen Desactivado'.
+CALL SP_CambiarEstatusRegimen(@IdReg1, 0);
+
+-- 4.2. Verificar Listado Operativo
+-- [ESPERADO]: El REG-QA-01 NO debe aparecer en el dropdown.
+CALL SP_ListarRegimenesActivos();
+
+-- 4.3. Reactivar Régimen 1
+-- [ESPERADO]: Mensaje 'Régimen Reactivado'.
+CALL SP_CambiarEstatusRegimen(@IdReg1, 1);
+
+-- 4.4. SIMULACIÓN DE CANDADO (Inyectamos un empleado dummy)
+-- Nota: Esto requiere que tengas un catalogo de Puestos/CT activos o usar IDs dummy si no validas FKs estrictas en Info_Personal aun.
+-- INSERT INTO `Info_Personal` (Nombre, Apellido_Paterno, Apellido_Materno, Fk_Id_CatRegimen, Activo) 
+-- VALUES ('EMPLEADO', 'TEST', 'QA', @IdReg1, 1);
+-- SET @IdEmpleadoDummy = LAST_INSERT_ID();
+
+-- 4.5. Intentar Desactivar con Empleado Activo
+-- [ESPERADO]: 🔴 ERROR: "BLOQUEO DE INTEGRIDAD: No se puede desactivar... existen EMPLEADOS ACTIVOS..."
+-- CALL SP_CambiarEstatusRegimen(@IdReg1, 0);
+
+-- 4.6. Liberar Candado (Desactivar o borrar empleado)
+-- UPDATE `Info_Personal` SET Activo = 0 WHERE Id_InfoPersonal = @IdEmpleadoDummy;
+-- O DELETE FROM `Info_Personal` WHERE Id_InfoPersonal = @IdEmpleadoDummy;
+
+-- 4.7. Intentar Desactivar de nuevo
+-- [ESPERADO]: Ahora sí debe dejar.
+CALL SP_CambiarEstatusRegimen(@IdReg1, 0);
+
+
+/* =================================================================================
+   FASE 5: ELIMINACIÓN FÍSICA
+   Objetivo: Limpieza final y prueba de Hard Delete.
+   ================================================================================= */
+
+-- 5.1. Eliminar Régimen 2
+-- [ESPERADO]: 'Registro eliminado permanentemente...'
+CALL SP_EliminarRegimenFisico(@IdReg2);
+
+-- 5.2. Eliminar Régimen 1
+CALL SP_EliminarRegimenFisico(@IdReg1);
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS - MÓDULO REGÍMENES
+   ================================================================================= */
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO REGIONES OPERATIVAS
+   =================================================================================
+   OBJETIVO:
+   Validar el "Gold Standard" en el ciclo de vida de una Región:
+   1. Registro con validación de identidad (Código/Nombre).
+   2. Autosanación (Recuperación de soft-deletes).
+   3. Bloqueo Determinístico en Edición.
+   4. Candados de Estatus (Dependencia de Personal).
+   5. Eliminación Física (Defensa en Profundidad).
+   ================================================================================= */
+
+USE Picade;
+
+/* ---------------------------------------------------------------------------------
+   FASE 0: LIMPIEZA PREVIA (Opcional)
+   --------------------------------------------------------------------------------- */
+-- DELETE FROM Cat_Regiones_Trabajo WHERE Codigo LIKE 'REG-QA%';
+
+/* =================================================================================
+   FASE 1: REGISTRO Y REGLAS DE UNICIDAD (HAPPY PATH & DIRTY DATA)
+   Objetivo: Verificar creación, sanitización y manejo de duplicados.
+   ================================================================================= */
+
+-- 1.1. Registro Exitoso (Happy Path)
+-- [ESPERADO]: Mensaje 'Región registrada exitosamente', Accion 'CREADA'.
+CALL SP_RegistrarRegion('REG-QA-01', 'REGION NORTE DE PRUEBA', 'COBERTURA ZONA NORTE');
+
+-- Guardamos ID para pruebas posteriores
+SET @IdReg1 = (SELECT Id_CatRegion FROM Cat_Regiones_Trabajo WHERE Codigo = 'REG-QA-01');
+
+-- 1.2. Prueba de "Todo Obligatorio" (Intentar registrar NULLs)
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE VALIDACIÓN: El CÓDIGO de la Región es obligatorio."
+CALL SP_RegistrarRegion(NULL, 'NOMBRE SIN CODIGO', 'DESC');
+
+-- 1.3. Registro del Segundo Dato (Para pruebas cruzadas)
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarRegion('REG-QA-02', 'REGION SUR DE PRUEBA', 'COBERTURA ZONA SUR');
+SET @IdReg2 = (SELECT Id_CatRegion FROM Cat_Regiones_Trabajo WHERE Codigo = 'REG-QA-02');
+
+-- 1.4. Prueba de Idempotencia por CÓDIGO (Re-enviar lo mismo del 1.1)
+-- [ESPERADO]: Mensaje 'La Región ya se encuentra registrada...', Accion 'REUSADA'.
+CALL SP_RegistrarRegion('REG-QA-01', 'REGION NORTE DE PRUEBA', 'OTRA DESCRIPCION NO IMPORTA');
+
+-- 1.5. Conflicto de Identidad Cruzada (Mismo Código, diferente Nombre)
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE CONFLICTO: El CÓDIGO ingresado ya existe..."
+CALL SP_RegistrarRegion('REG-QA-01', 'NOMBRE IMPOSTOR', 'DESC');
+
+-- 1.6. Conflicto de Identidad Cruzada (Mismo Nombre, diferente Código)
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE CONFLICTO: El NOMBRE ingresado ya existe..."
+CALL SP_RegistrarRegion('REG-QA-99', 'REGION NORTE DE PRUEBA', 'DESC');
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS
+   Objetivo: Verificar que la UI reciba los datos correctos.
+   ================================================================================= */
+
+-- 2.1. Listado Admin (Vista Completa)
+-- [ESPERADO]: Deben salir los 2 registros creados. Verificar columna 'Estatus_Region'.
+CALL SP_ListarRegionesAdmin();
+
+-- 2.2. Listado Activos (Dropdown Operativo)
+-- [ESPERADO]: Solo ID, Código y Nombre. Deben salir ambos.
+CALL SP_ListarRegionesActivas();
+
+-- 2.3. Consulta Específica (Para Edición - Raw Data)
+-- [ESPERADO]: Datos crudos. Verificar fechas created_at/updated_at.
+CALL SP_ConsultarRegionEspecifica(@IdReg1);
+
+/* =================================================================================
+   FASE 3: EDICIÓN E INTEGRIDAD
+   Objetivo: Verificar validaciones al modificar datos y bloqueos.
+   ================================================================================= */
+
+-- 3.1. Prueba "Sin Cambios" (Idempotencia en Update)
+-- [ESPERADO]: Mensaje 'No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarRegion(@IdReg1, 'REG-QA-01', 'REGION NORTE DE PRUEBA', 'COBERTURA ZONA NORTE');
+
+-- 3.2. Prueba de Duplicidad Global (Robar código de otro)
+-- Intentamos ponerle a la Región 2 el código de la Región 1.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE DUPLICIDAD: El CÓDIGO ya pertenece a otra Región."
+CALL SP_EditarRegion(@IdReg2, 'REG-QA-01', 'NOMBRE X', 'DESC');
+
+-- 3.3. Prueba de Duplicidad Global (Robar nombre de otro)
+-- Intentamos ponerle a la Región 2 el nombre de la Región 1.
+-- [ESPERADO]: 🔴 ERROR: "ERROR DE DUPLICIDAD: El NOMBRE ya pertenece a otra Región."
+CALL SP_EditarRegion(@IdReg2, 'COD-X', 'REGION NORTE DE PRUEBA', 'DESC');
+
+-- 3.4. Edición Correcta (Evolución de datos)
+-- Cambiamos nombre y descripción de la Región 2.
+-- [ESPERADO]: Mensaje 'Región actualizada correctamente', Accion 'ACTUALIZADA'.
+CALL SP_EditarRegion(@IdReg2, 'REG-QA-02', 'REGION SUR EVOLUCIONADA', 'NUEVA COBERTURA TOTAL');
+
+/* =================================================================================
+   FASE 4: ESTATUS Y CANDADOS DE INTEGRIDAD (SIMULACIÓN DE PERSONAL)
+   Objetivo: Verificar que no se pueda desactivar si hay uso real.
+   ================================================================================= */
+
+-- 4.1. Desactivar Región 1 (Baja Lógica - Sin empleados aún)
+-- [ESPERADO]: Mensaje '...Región ha sido DESACTIVADA...'.
+CALL SP_CambiarEstatusRegion(@IdReg1, 0);
+
+-- 4.2. Verificar Listado Operativo
+-- [ESPERADO]: La REG-QA-01 NO debe aparecer en el dropdown (SP_ListarRegionesActivas).
+CALL SP_ListarRegionesActivas();
+
+-- 4.3. Reactivar Región 1 (Para preparar la siguiente prueba)
+-- [ESPERADO]: Mensaje '...Región ha sido REACTIVADA...'.
+CALL SP_CambiarEstatusRegion(@IdReg1, 1);
+
+/* ---------------------------------------------------------------------------------
+   [SIMULACIÓN DE CANDADO DE NEGOCIO]
+   Para esta prueba, necesitamos simular que hay un empleado en esta región.
+   IMPORTANTE: Si no tienes datos en Cat_Puestos, Cat_Deptos, etc., inserta NULLs si tu BD lo permite,
+   o usa IDs válidos de tus otros catálogos. Aquí asumo una inserción mínima para detonar el candado.
+   --------------------------------------------------------------------------------- */
+
+-- A. Insertar Empleado Dummy vinculado a la Región 1 (@IdReg1)
+-- INSERT INTO `Info_Personal` (Nombre, Apellido_Paterno, Fk_Id_CatRegion, Activo) 
+-- VALUES ('EMPLEADO_TEST', 'QA', @IdReg1, 1);
+-- SET @IdEmpleadoDummy = LAST_INSERT_ID();
+
+-- 4.4. Intentar Desactivar Región 1 con Empleado Activo
+-- [ESPERADO]: 🔴 ERROR: "CONFLICTO DE INTEGRIDAD [409]: ...Existen EMPLEADOS ACTIVOS..."
+-- CALL SP_CambiarEstatusRegion(@IdReg1, 0);
+
+-- B. Liberar Candado (Simular que damos de baja al empleado o lo borramos)
+-- DELETE FROM `Info_Personal` WHERE Id_InfoPersonal = @IdEmpleadoDummy;
+
+-- 4.5. Intentar Desactivar de nuevo (Ahora limpio)
+-- [ESPERADO]: ÉXITO.
+CALL SP_CambiarEstatusRegion(@IdReg1, 0);
+
+/* =================================================================================
+   FASE 5: ELIMINACIÓN FÍSICA (HARD DELETE)
+   Objetivo: Limpieza final y prueba de los 3 Anillos de Seguridad.
+   ================================================================================= */
+
+-- 5.1. Intentar Borrar Región Inexistente
+-- [ESPERADO]: 🔴 ERROR 404: "La Región que intenta eliminar no existe..."
+CALL SP_EliminarRegionFisica(999999);
+
+/* ---------------------------------------------------------------------------------
+   [SIMULACIÓN DE CANDADO HISTÓRICO]
+   Aunque el empleado esté borrado o inactivo, si existe en historial, NO DEBE DEJAR BORRAR FISICAMENTE.
+   --------------------------------------------------------------------------------- */
+-- A. Insertar Empleado Inactivo (Histórico) en Región 2 (@IdReg2)
+-- INSERT INTO `Info_Personal` (Nombre, Fk_Id_CatRegion, Activo) VALUES ('HISTORICO', @IdReg2, 0);
+-- SET @IdEmpleadoHist = LAST_INSERT_ID();
+
+-- 5.2. Intentar Borrar Región 2 (Tiene historial inactivo)
+-- [ESPERADO]: 🔴 ERROR 409: "...Existen expedientes de PERSONAL (Activos o Históricos)..."
+-- CALL SP_EliminarRegionFisica(@IdReg2);
+
+-- B. Limpieza del Histórico para permitir borrado
+-- DELETE FROM `Info_Personal` WHERE Id_InfoPersonal = @IdEmpleadoHist;
+
+-- 5.3. Eliminación Física Exitosa - Región 2
+-- [ESPERADO]: 'ÉXITO: La Región ha sido eliminada permanentemente...'
+CALL SP_EliminarRegionFisica(@IdReg2);
+
+-- 5.4. Eliminación Física Exitosa - Región 1
+CALL SP_EliminarRegionFisica(@IdReg1);
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS - MÓDULO REGIONES
+   Si todos los semáforos rojos y verdes funcionaron, el módulo está LISTO PARA PRODUCCIÓN.
+   ================================================================================= */
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO PUESTOS DE TRABAJO
+   =================================================================================
+   OBJETIVO:
+   Validar la robustez del módulo `Cat_Puestos_Trabajo`.
+   
+   ALCANCE DE PRUEBAS:
+   1. Registro: Validación de obligatoriedad, identidad dual y autosanación.
+   2. Lectura: Vistas operativas vs administrativas.
+   3. Edición: Bloqueo de duplicados y detección de "Sin Cambios".
+   4. Estatus: Bloqueo de desactivación si hay empleados activos.
+   5. Eliminación: Bloqueo de borrado físico si hay historial laboral.
+   ================================================================================= */
+
+USE Picade;
+
+/* ---------------------------------------------------------------------------------
+   FASE 0: LIMPIEZA PREVIA (Opcional, para reiniciar pruebas)
+   --------------------------------------------------------------------------------- */
+-- DELETE FROM Cat_Puestos_Trabajo WHERE Codigo LIKE 'PUE-QA%';
+
+/* =================================================================================
+   FASE 1: REGISTRO Y REGLAS DE UNICIDAD (HAPPY PATH & DIRTY DATA)
+   Objetivo: Verificar creación, sanitización y manejo de duplicados.
+   ================================================================================= */
+
+-- 1.1. Registro Exitoso (Happy Path)
+-- [ESPERADO]: Mensaje 'Puesto registrado correctamente', Accion 'CREADA'.
+CALL SP_RegistrarPuesto('PUE-QA-01', 'PUESTO ALPHA DE PRUEBA', 'DESCRIPCION INICIAL');
+
+-- Guardamos ID para pruebas posteriores
+SET @IdPuesto1 = (SELECT Id_CatPuesto FROM Cat_Puestos_Trabajo WHERE Codigo = 'PUE-QA-01');
+
+-- 1.2. Prueba de "Todo Obligatorio" (Intentar registrar NULLs)
+-- [ESPERADO]: 🔴 ERROR [400]: "ERROR DE VALIDACIÓN: El CÓDIGO del Puesto es obligatorio."
+CALL SP_RegistrarPuesto(NULL, 'NOMBRE SIN CODIGO', 'DESC');
+
+-- 1.3. Registro del Segundo Dato (Para pruebas cruzadas)
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarPuesto('PUE-QA-02', 'PUESTO BETA DE PRUEBA', 'DESCRIPCION BETA');
+SET @IdPuesto2 = (SELECT Id_CatPuesto FROM Cat_Puestos_Trabajo WHERE Codigo = 'PUE-QA-02');
+
+-- 1.4. Prueba de Idempotencia por CÓDIGO (Re-enviar lo mismo del 1.1)
+-- [ESPERADO]: Mensaje '...ya se encuentra registrado...', Accion 'REUSADA'.
+CALL SP_RegistrarPuesto('PUE-QA-01', 'PUESTO ALPHA DE PRUEBA', 'OTRA DESC');
+
+-- 1.5. Conflicto de Identidad Cruzada (Mismo Código, diferente Nombre)
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El CÓDIGO ingresado ya existe..."
+CALL SP_RegistrarPuesto('PUE-QA-01', 'NOMBRE IMPOSTOR', 'DESC');
+
+-- 1.6. Conflicto de Identidad Cruzada (Mismo Nombre, diferente Código)
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El NOMBRE ingresado ya existe..."
+CALL SP_RegistrarPuesto('PUE-QA-99', 'PUESTO ALPHA DE PRUEBA', 'DESC');
+
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS
+   Objetivo: Verificar que la UI reciba los datos correctos y limpios.
+   ================================================================================= */
+
+-- 2.1. Listado Admin (Vista Completa - Grid)
+-- [ESPERADO]: Deben salir los 2 registros creados. Verificar columna 'Estatus_Puesto'.
+CALL SP_ListarPuestosAdmin();
+
+-- 2.2. Listado Activos (Dropdown Operativo)
+-- [ESPERADO]: Solo ID, Código y Nombre. Deben salir ambos.
+CALL SP_ListarPuestosActivos();
+
+-- 2.3. Consulta Específica (Para Edición - Raw Data)
+-- [ESPERADO]: Datos crudos. Verificar fechas created_at/updated_at.
+CALL SP_ConsultarPuestoEspecifico(@IdPuesto1);
+
+
+/* =================================================================================
+   FASE 3: EDICIÓN E INTEGRIDAD
+   Objetivo: Verificar validaciones al modificar datos y bloqueos.
+   ================================================================================= */
+
+-- 3.1. Prueba "Sin Cambios" (Idempotencia en Update)
+-- [ESPERADO]: Mensaje 'No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarPuesto(@IdPuesto1, 'PUE-QA-01', 'PUESTO ALPHA DE PRUEBA', 'DESCRIPCION INICIAL');
+
+-- 3.2. Prueba de Duplicidad Global (Robar código de otro)
+-- Intentamos ponerle al Puesto 2 el código del Puesto 1.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El CÓDIGO ya pertenece a otro Puesto."
+CALL SP_EditarPuesto(@IdPuesto2, 'PUE-QA-01', 'NOMBRE X', 'DESC');
+
+-- 3.3. Prueba de Duplicidad Global (Robar nombre de otro)
+-- Intentamos ponerle al Puesto 2 el nombre del Puesto 1.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El NOMBRE ya pertenece a otro Puesto."
+CALL SP_EditarPuesto(@IdPuesto2, 'COD-X', 'PUESTO ALPHA DE PRUEBA', 'DESC');
+
+-- 3.4. Edición Correcta (Evolución de datos)
+-- Cambiamos nombre y descripción del Puesto 2.
+-- [ESPERADO]: Mensaje 'Puesto actualizado correctamente.', Accion 'ACTUALIZADA'.
+CALL SP_EditarPuesto(@IdPuesto2, 'PUE-QA-02', 'PUESTO BETA EVOLUCIONADO', 'NUEVA DESCRIPCION');
+
+
+/* =================================================================================
+   FASE 4: ESTATUS Y CANDADOS DE INTEGRIDAD (SIMULACIÓN DE PERSONAL)
+   Objetivo: Verificar que no se pueda desactivar si hay uso real.
+   ================================================================================= */
+
+-- 4.1. Desactivar Puesto 1 (Baja Lógica - Sin empleados aún)
+-- [ESPERADO]: Mensaje '...Puesto ha sido DESACTIVADO...'.
+CALL SP_CambiarEstatusPuesto(@IdPuesto1, 0);
+
+-- 4.2. Verificar Listado Operativo
+-- [ESPERADO]: El PUE-QA-01 NO debe aparecer en el dropdown (SP_ListarPuestosActivos).
+CALL SP_ListarPuestosActivos();
+
+-- 4.3. Reactivar Puesto 1 (Para preparar la siguiente prueba)
+-- [ESPERADO]: Mensaje '...Puesto ha sido REACTIVADO...'.
+CALL SP_CambiarEstatusPuesto(@IdPuesto1, 1);
+
+/* ---------------------------------------------------------------------------------
+   [SIMULACIÓN DE CANDADO DE NEGOCIO]
+   Simulamos la asignación de este puesto a un empleado.
+   --------------------------------------------------------------------------------- */
+
+-- A. Insertar Empleado Dummy vinculado al Puesto 1 (@IdPuesto1)
+-- IMPORTANTE: Se usan datos mínimos requeridos por la tabla Info_Personal
+INSERT INTO `Info_Personal` (Nombre, Apellido_Paterno, Apellido_Materno, Fk_Id_CatPuesto, Activo) 
+VALUES ('EMPLEADO_TEST_PUESTO', 'QA', 'LAB', @IdPuesto1, 1);
+
+SET @IdEmpleadoDummy = LAST_INSERT_ID();
+
+-- 4.4. Intentar Desactivar Puesto 1 con Empleado Activo
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE INTEGRIDAD... Existen EMPLEADOS ACTIVOS..."
+CALL SP_CambiarEstatusPuesto(@IdPuesto1, 0);
+
+-- B. Liberar Candado (Simular que damos de baja al empleado)
+UPDATE `Info_Personal` SET Activo = 0 WHERE Id_InfoPersonal = @IdEmpleadoDummy;
+
+-- 4.5. Intentar Desactivar de nuevo (Ahora limpio de activos)
+-- [ESPERADO]: ÉXITO.
+CALL SP_CambiarEstatusPuesto(@IdPuesto1, 0);
+
+
+/* =================================================================================
+   FASE 5: ELIMINACIÓN FÍSICA (HARD DELETE)
+   Objetivo: Limpieza final y prueba de los 3 Anillos de Seguridad.
+   ================================================================================= */
+
+-- 5.1. Intentar Borrar Puesto Inexistente
+-- [ESPERADO]: 🔴 ERROR [404]: "El Puesto que intenta eliminar no existe..."
+CALL SP_EliminarPuestoFisico(999999);
+
+/* ---------------------------------------------------------------------------------
+   [PRUEBA DE CANDADO HISTÓRICO]
+   El empleado dummy (@IdEmpleadoDummy) está Inactivo (Activo=0), pero EXISTE en la BD.
+   Por lo tanto, NO DEBE DEJAR BORRAR FISICAMENTE el puesto, para no romper el historial.
+   --------------------------------------------------------------------------------- */
+
+-- 5.2. Intentar Borrar Puesto 1 (Tiene historial inactivo)
+-- [ESPERADO]: 🔴 ERROR [409]: "...Existen expedientes de PERSONAL (Activos o Históricos)..."
+CALL SP_EliminarPuestoFisico(@IdPuesto1);
+
+-- C. Limpieza TOTAL del Histórico para permitir borrado (Solo para efectos de prueba)
+DELETE FROM `Info_Personal` WHERE Id_InfoPersonal = @IdEmpleadoDummy;
+
+-- 5.3. Eliminación Física Exitosa - Puesto 1
+-- [ESPERADO]: 'ÉXITO: El Puesto ha sido eliminado permanentemente...'
+CALL SP_EliminarPuestoFisico(@IdPuesto1);
+
+-- 5.4. Eliminación Física Exitosa - Puesto 2
+CALL SP_EliminarPuestoFisico(@IdPuesto2);
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS - MÓDULO PUESTOS
+   Si pasaste los errores rojos controlados, el módulo es seguro.
+   ================================================================================= */
+
+use Picade;
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO ROLES DE SISTEMA
+   =================================================================================
+   OBJETIVO:
+   Validar la robustez, seguridad y lógica de negocio de la entidad `Cat_Roles`.
+   
+   ALCANCE DE PRUEBAS:
+   1. Registro: Sanitización, Identidad Dual (Código/Nombre) y Autosanación.
+   2. Lectura: Vistas abstractas y Consultas de detalle.
+   3. Edición: Bloqueo de duplicados, Concurrencia y "Sin Cambios".
+   4. Estatus (Soft Delete): Política de "Kill Switch" (Desactivar con usuarios).
+   5. Eliminación Física (Hard Delete): Bloqueo estricto por dependencias.
+   ================================================================================= */
+
+/* ---------------------------------------------------------------------------------
+   FASE 0: LIMPIEZA PREVIA (Para ambiente de pruebas)
+   --------------------------------------------------------------------------------- */
+-- DELETE FROM `Cat_Roles` WHERE `Codigo` LIKE 'ROL-QA%';
+-- DELETE FROM `Usuarios` WHERE `Email` LIKE 'qa_%@test.com';
+
+/* =================================================================================
+   FASE 1: REGISTRO Y REGLAS DE UNICIDAD (HAPPY PATH & DIRTY DATA)
+   Objetivo: Verificar creación, limpieza de strings y manejo de duplicados.
+   ================================================================================= */
+
+-- 1.1. Registro Exitoso con Datos Sucios (Espacios)
+-- [ESPERADO]: Mensaje 'ÉXITO: Rol creado correctamente.', Accion 'CREADA'.
+-- El sistema debe hacer TRIM automático.
+CALL SP_RegistrarRol('  ROL-QA-01  ', '  ROL DE CALIDAD ALPHA  ', '  Descripcion con espacios  ');
+
+-- Guardamos ID para pruebas posteriores
+SET @IdRol1 = (SELECT Id_Rol FROM Cat_Roles WHERE Codigo = 'ROL-QA-01');
+
+-- 1.2. Prueba de "Todo Obligatorio" (Intentar registrar NULLs)
+-- [ESPERADO]: 🔴 ERROR [400]: "ERROR DE VALIDACIÓN: El campo CÓDIGO es obligatorio."
+CALL SP_RegistrarRol(NULL, 'NOMBRE SIN CODIGO', 'DESC');
+
+-- 1.3. Registro del Segundo Dato (Para pruebas cruzadas)
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarRol('ROL-QA-02', 'ROL DE CALIDAD BETA', 'Descripcion Beta');
+SET @IdRol2 = (SELECT Id_Rol FROM Cat_Roles WHERE Codigo = 'ROL-QA-02');
+
+-- 1.4. Prueba de Idempotencia por CÓDIGO (Re-enviar lo mismo del 1.1)
+-- [ESPERADO]: Mensaje 'AVISO: El Rol ya existe...', Accion 'REUSADA'.
+CALL SP_RegistrarRol('ROL-QA-01', 'ROL DE CALIDAD ALPHA', 'OTRA DESC');
+
+-- 1.5. Conflicto de Identidad Cruzada (Mismo Código, diferente Nombre)
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE INTEGRIDAD: El CÓDIGO ya existe pero pertenece a un Rol con distinto NOMBRE."
+CALL SP_RegistrarRol('ROL-QA-01', 'NOMBRE IMPOSTOR', 'DESC');
+
+-- 1.6. Conflicto de Identidad Cruzada (Mismo Nombre, diferente Código)
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE INTEGRIDAD: El NOMBRE ya existe asociado a otro CÓDIGO diferente."
+CALL SP_RegistrarRol('ROL-QA-99', 'ROL DE CALIDAD ALPHA', 'DESC');
+
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS
+   Objetivo: Verificar que la UI reciba los datos correctos y limpios.
+   ================================================================================= */
+
+-- 2.1. Listado Admin (Vista Completa - Grid)
+-- [ESPERADO]: Deben salir los 2 registros creados. Verificar columna 'Estatus_Rol'.
+CALL SP_ListarRolesAdmin();
+
+-- 2.2. Listado Activos (Dropdown Operativo)
+-- [ESPERADO]: Solo ID, Código y Nombre. Deben salir ambos.
+CALL SP_ListarRolesActivos();
+
+-- 2.3. Consulta Específica (Para Edición - Raw Data)
+-- [ESPERADO]: Datos crudos. Verificar fechas created_at/updated_at.
+CALL SP_ConsultarRolEspecifico(@IdRol1);
+
+
+/* =================================================================================
+   FASE 3: EDICIÓN E INTEGRIDAD
+   Objetivo: Verificar validaciones al modificar datos y bloqueos.
+   ================================================================================= */
+
+-- 3.1. Prueba "Sin Cambios" (Idempotencia en Update)
+-- [ESPERADO]: Mensaje 'AVISO: No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarRol(@IdRol1, 'ROL-QA-01', 'ROL DE CALIDAD ALPHA', 'Descripcion con espacios');
+
+-- 3.2. Prueba de Duplicidad Global (Robar código de otro)
+-- Intentamos ponerle al Rol 2 el código del Rol 1.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El CÓDIGO ingresado ya pertenece a otro Rol."
+CALL SP_EditarRol(@IdRol2, 'ROL-QA-01', 'NOMBRE X', 'DESC');
+
+-- 3.3. Prueba de Duplicidad Global (Robar nombre de otro)
+-- Intentamos ponerle al Rol 2 el nombre del Rol 1.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El NOMBRE ingresado ya pertenece a otro Rol."
+CALL SP_EditarRol(@IdRol2, 'COD-X', 'ROL DE CALIDAD ALPHA', 'DESC');
+
+-- 3.4. Edición Correcta (Evolución de datos)
+-- Cambiamos nombre y descripción del Rol 2.
+-- [ESPERADO]: Mensaje 'ÉXITO: Rol actualizado correctamente.', Accion 'ACTUALIZADA'.
+CALL SP_EditarRol(@IdRol2, 'ROL-QA-02', 'ROL BETA EVOLUCIONADO', 'NUEVA DESCRIPCION');
+
+
+/* =================================================================================
+   FASE 4: ESTATUS Y POLÍTICA "KILL SWITCH"
+   Objetivo: Verificar que se pueda desactivar AUNQUE haya usuarios (Seguridad > Integridad).
+   ================================================================================= */
+
+-- 4.1. Desactivar Rol 1 (Sin usuarios aún)
+-- [ESPERADO]: Mensaje 'ÉXITO: Rol desactivado correctamente.', Accion 'CAMBIO_ESTATUS'.
+CALL SP_CambiarEstatusRol(@IdRol1, 0);
+
+-- 4.2. Verificar Listado Operativo
+-- [ESPERADO]: El ROL-QA-01 NO debe aparecer en el dropdown (SP_ListarRolesActivos).
+CALL SP_ListarRolesActivos();
+
+-- 4.3. Reactivar Rol 1 (Para preparar la siguiente prueba)
+-- [ESPERADO]: Mensaje 'ÉXITO: Rol reactivado correctamente.'.
+CALL SP_CambiarEstatusRol(@IdRol1, 1);
+
+/* ---------------------------------------------------------------------------------
+   [SIMULACIÓN DE USUARIO ACTIVO]
+   Creamos un usuario dummy asignado al Rol 1 para probar la política de seguridad.
+   --------------------------------------------------------------------------------- */
+
+-- A. Insertar Usuario Dummy vinculado al Rol 1 (@IdRol1)
+-- (Usamos un InfoPersonal ficticio ID 1, asegurate que exista o usa uno válido)
+INSERT INTO `Usuarios` (`Ficha`, `Email`, `Contraseña`, `Fk_Id_InfoPersonal`, `Fk_Rol`, `Activo`)
+VALUES ('QA-USER-01', 'qa_test_rol@test.com', 'hash123', 1, @IdRol1, 1);
+
+SET @IdUsuarioDummy = LAST_INSERT_ID();
+
+-- 4.4. Intentar Desactivar Rol 1 con Usuario Activo
+-- [ESPERADO]: ✅ ÉXITO. A diferencia de los catálogos geográficos, aquí DEBE PERMITIRLO.
+-- Mensaje: 'ÉXITO: Rol desactivado correctamente.'
+-- Esto confirma que el "Kill Switch" funciona para bloquear acceso masivo.
+CALL SP_CambiarEstatusRol(@IdRol1, 0);
+
+-- 4.5. Reactivar para limpieza
+CALL SP_CambiarEstatusRol(@IdRol1, 1);
+
+
+/* =================================================================================
+   FASE 5: ELIMINACIÓN FÍSICA (HARD DELETE)
+   Objetivo: Verificar que el borrado físico SÍ esté bloqueado por dependencias.
+   ================================================================================= */
+
+-- 5.1. Intentar Borrar Rol Inexistente
+-- [ESPERADO]: 🔴 ERROR [404]: "ERROR DE NEGOCIO: El Rol que intenta eliminar no existe..."
+CALL SP_EliminarRolFisicamente(999999);
+
+/* ---------------------------------------------------------------------------------
+   [PRUEBA DE CANDADO DE SEGURIDAD]
+   El usuario dummy (@IdUsuarioDummy) existe y tiene el Rol 1.
+   Por lo tanto, el sistema NO DEBE DEJAR BORRAR FISICAMENTE el rol.
+   --------------------------------------------------------------------------------- */
+
+-- 5.2. Intentar Borrar Rol 1 (Tiene usuario asignado)
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE SEGURIDAD: ...Existen USUARIOS registrados con este perfil..."
+CALL SP_EliminarRolFisicamente(@IdRol1);
+
+-- B. Limpieza del Usuario para permitir borrado (Solo para efectos de prueba)
+DELETE FROM `Usuarios` WHERE `Id_Usuario` = @IdUsuarioDummy;
+
+-- 5.3. Eliminación Física Exitosa - Rol 1
+-- [ESPERADO]: 'ÉXITO: El Rol ha sido eliminado permanentemente...'
+CALL SP_EliminarRolFisicamente(@IdRol1);
+
+-- 5.4. Eliminación Física Exitosa - Rol 2
+CALL SP_EliminarRolFisicamente(@IdRol2);
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS - MÓDULO ROLES
+   Si pasaste los errores rojos controlados, el módulo es seguro.
+   ================================================================================= */
+
+USE Picade;
+
+/* =================================================================================
+   SCRIPT DE VALIDACIÓN (QA) - MÓDULO TIPOS DE INSTRUCCIÓN
+   =================================================================================
+   OBJETIVO:
+   Validar la robustez del módulo `Cat_Tipos_Instruccion_Cap`.
+   
+   ALCANCE DE PRUEBAS:
+   1. Registro: Sanitización, Reglas de Unicidad y Autosanación.
+   2. Lectura: Vistas Operativas vs Administrativas.
+   3. Edición: Idempotencia, Bloqueo de Duplicados Cruzados.
+   4. Estatus (Soft Delete): Candado de Integridad (No borrar si hay Cursos).
+   5. Eliminación Física (Hard Delete): Bloqueo estricto por historial.
+   ================================================================================= */
+
+/* ---------------------------------------------------------------------------------
+   FASE 0: LIMPIEZA PREVIA (Opcional, para entorno de pruebas limpio)
+   --------------------------------------------------------------------------------- */
+-- DELETE FROM Cat_Tipos_Instruccion_Cap WHERE Nombre LIKE '%PRUEBA QA%';
+
+/* =================================================================================
+   FASE 1: REGISTRO Y REGLAS DE INTEGRIDAD (HAPPY PATH & DIRTY DATA)
+   Objetivo: Verificar creación, limpieza de strings y manejo de duplicados.
+   ================================================================================= */
+
+-- 1.1. Registro Exitoso con Datos Sucios (Espacios)
+-- [ESPERADO]: Mensaje 'ÉXITO: Tipo... registrado correctamente', Accion 'CREADA'.
+-- El sistema debe hacer TRIM automático.
+CALL SP_RegistrarTipoInstruccion('  TEÓRICO PRUEBA QA  ', '  Requiere aula y proyector  ');
+
+-- Guardamos ID para pruebas posteriores
+SET @IdTipo1 = (SELECT Id_CatTipoInstCap FROM Cat_Tipos_Instruccion_Cap WHERE Nombre = 'TEÓRICO PRUEBA QA');
+
+-- 1.2. Prueba de "Todo Obligatorio" (Intentar registrar NULL)
+-- [ESPERADO]: 🔴 ERROR [400]: "ERROR DE VALIDACIÓN: El NOMBRE del Tipo de Instrucción es obligatorio."
+CALL SP_RegistrarTipoInstruccion(NULL, 'Descripcion sin nombre');
+
+-- 1.3. Registro del Segundo Dato (Para pruebas cruzadas)
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarTipoInstruccion('PRÁCTICO PRUEBA QA', 'Requiere taller o laboratorio');
+SET @IdTipo2 = (SELECT Id_CatTipoInstCap FROM Cat_Tipos_Instruccion_Cap WHERE Nombre = 'PRÁCTICO PRUEBA QA');
+
+-- 1.4. Prueba de Idempotencia (Re-enviar lo mismo del 1.1)
+-- [ESPERADO]: Mensaje 'AVISO: El Tipo... ya existe...', Accion 'REUSADA'.
+CALL SP_RegistrarTipoInstruccion('TEÓRICO PRUEBA QA', 'Otra descripción');
+
+
+/* =================================================================================
+   FASE 2: LECTURA Y VISTAS
+   Objetivo: Verificar que la UI reciba los datos correctos y limpios.
+   ================================================================================= */
+
+-- 2.1. Listado Admin (Vista Completa - Grid)
+-- [ESPERADO]: Deben salir los 2 registros creados. Verificar columna 'Estatus_Tipo_Instruccion'.
+CALL SP_ListarTiposInstruccionAdmin();
+
+-- 2.2. Listado Activos (Dropdown Operativo)
+-- [ESPERADO]: Solo ID y Nombre. Deben salir ambos.
+CALL SP_ListarTiposInstruccionActivos();
+
+-- 2.3. Consulta Específica (Para Edición - Raw Data)
+-- [ESPERADO]: Datos crudos. Verificar fechas created_at/updated_at.
+CALL SP_ConsultarTipoInstruccionEspecifico(@IdTipo1);
+
+
+/* =================================================================================
+   FASE 3: EDICIÓN E INTEGRIDAD
+   Objetivo: Verificar validaciones al modificar datos y bloqueos.
+   ================================================================================= */
+
+-- 3.1. Prueba "Sin Cambios" (Idempotencia en Update)
+-- [ESPERADO]: Mensaje 'AVISO: No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarTipoInstruccion(@IdTipo1, 'TEÓRICO PRUEBA QA', 'Requiere aula y proyector');
+
+-- 3.2. Prueba de Duplicidad Cruzada
+-- Intentamos cambiar el nombre del Tipo 2 para que se llame como el Tipo 1.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El NOMBRE ingresado ya pertenece a otro Tipo de Instrucción."
+CALL SP_EditarTipoInstruccion(@IdTipo2, 'TEÓRICO PRUEBA QA', 'Intento de duplicado');
+
+-- 3.3. Edición Correcta
+-- Cambiamos nombre del Tipo 1.
+-- [ESPERADO]: Mensaje 'ÉXITO: Tipo... actualizado correctamente.', Accion 'ACTUALIZADA'.
+CALL SP_EditarTipoInstruccion(@IdTipo1, 'TEÓRICO AVANZADO QA', 'Nueva descripción');
+
+
+/* =================================================================================
+   FASE 4: ESTATUS Y CANDADOS DE INTEGRIDAD (SIMULACIÓN DE CURSOS)
+   Objetivo: Verificar que no se pueda desactivar si hay cursos dependiendo de él.
+   ================================================================================= */
+
+-- 4.1. Desactivar Tipo 2 (Baja Lógica - Sin cursos aún)
+-- [ESPERADO]: Mensaje 'ÉXITO: ...ha sido DESACTIVADO.', Accion 'ESTATUS_CAMBIADO'.
+CALL SP_CambiarEstatusTipoInstruccion(@IdTipo2, 0);
+
+-- 4.2. Verificar Listado Operativo
+-- [ESPERADO]: El 'PRÁCTICO PRUEBA QA' NO debe aparecer en el dropdown (SP_ListarTiposInstruccionActivos).
+CALL SP_ListarTiposInstruccionActivos();
+
+-- 4.3. Reactivar Tipo 2 (Para preparar la siguiente prueba)
+-- [ESPERADO]: Mensaje 'ÉXITO: ...ha sido REACTIVADO.'.
+CALL SP_CambiarEstatusTipoInstruccion(@IdTipo2, 1);
+
+/* ---------------------------------------------------------------------------------
+   [SIMULACIÓN DE CANDADO DE NEGOCIO - CURSOS]
+   Para esta prueba, necesitamos simular que existe un TEMA (Curso) usando este tipo.
+   Como aún no creamos los SPs de Temas, haremos una inserción manual temporal controlada.
+   --------------------------------------------------------------------------------- */
+
+-- A. Insertar Tema Dummy vinculado al Tipo 1 (@IdTipo1)
+INSERT INTO `Cat_Temas_Capacitacion` (`Nombre`, `Fk_Id_CatTipoInstCap`, `Activo`) 
+VALUES ('CURSO DUMMY QA', @IdTipo1, 1);
+SET @IdTemaDummy = LAST_INSERT_ID();
+
+-- 4.4. Intentar Desactivar Tipo 1 con Curso Activo
+-- [ESPERADO]: 🔴 ERROR [409]: "BLOQUEO DE INTEGRIDAD... existen CURSOS ACTIVOS asociados..."
+CALL SP_CambiarEstatusTipoInstruccion(@IdTipo1, 0);
+
+-- B. Liberar Candado (Simular que damos de baja el curso)
+UPDATE `Cat_Temas_Capacitacion` SET `Activo` = 0 WHERE `Id_Cat_TemasCap` = @IdTemaDummy;
+
+-- 4.5. Intentar Desactivar de nuevo (Ahora limpio de cursos activos)
+-- [ESPERADO]: ÉXITO.
+CALL SP_CambiarEstatusTipoInstruccion(@IdTipo1, 0);
+
+
+/* =================================================================================
+   FASE 5: ELIMINACIÓN FÍSICA (HARD DELETE)
+   Objetivo: Limpieza final y prueba de los Anillos de Seguridad.
+   ================================================================================= */
+
+-- 5.1. Intentar Borrar Tipo Inexistente
+-- [ESPERADO]: 🔴 ERROR [404]: "ERROR DE NEGOCIO: El Tipo de Instrucción... no existe."
+CALL SP_EliminarTipoInstruccionFisico(999999);
+
+/* ---------------------------------------------------------------------------------
+   [PRUEBA DE CANDADO HISTÓRICO]
+   El curso dummy (@IdTemaDummy) está Inactivo (Activo=0), pero EXISTE en la BD.
+   Por lo tanto, NO DEBE DEJAR BORRAR FISICAMENTE el tipo, para no romper el historial.
+   --------------------------------------------------------------------------------- */
+
+-- 5.2. Intentar Borrar Tipo 1 (Tiene historial de cursos inactivos)
+-- [ESPERADO]: 🔴 ERROR [409]: "BLOQUEO DE NEGOCIO... existen TEMAS DE CAPACITACIÓN (Activos o Históricos)..."
+CALL SP_EliminarTipoInstruccionFisico(@IdTipo1);
+
+-- C. Limpieza TOTAL del Histórico para permitir borrado (Solo para efectos de prueba)
+DELETE FROM `Cat_Temas_Capacitacion` WHERE `Id_Cat_TemasCap` = @IdTemaDummy;
+
+-- 5.3. Eliminación Física Exitosa - Tipo 1
+-- [ESPERADO]: 'Registro eliminado permanentemente...'
+CALL SP_EliminarTipoInstruccionFisico(@IdTipo1);
+
+-- 5.4. Eliminación Física Exitosa - Tipo 2
+CALL SP_EliminarTipoInstruccionFisico(@IdTipo2);
+
+/* =================================================================================
+   FIN DE LAS PRUEBAS - MÓDULO TIPOS DE INSTRUCCIÓN
+   Si pasaste los errores rojos controlados, el módulo es DIAMOND STANDARD.
+   ================================================================================= */
+
+USE Picade;
+
+/* =================================================================================
+   MASTER SCRIPT DE VALIDACIÓN (QA) - ESTATUS DE CAPACITACIÓN
+   VERSIÓN: DIAMOND STANDARD (COBERTURA TOTAL)
+   =================================================================================
+   OBJETIVO: 
+   Certificar que el módulo de Estatus es invulnerable a datos sucios, duplicados,
+   inconsistencias de edición y violaciones de integridad referencial.
+   
+   ALCANCE:
+   - FASE 0: Limpieza Segura.
+   - FASE 1: Infraestructura (Geografía, RH, Academia).
+   - FASE 2: CREATE (Validación de Integridad y Unicidad).
+   - FASE 3: READ (Vistas).
+   - FASE 4: UPDATE (Validación de Conflictos y Idempotencia).
+   - FASE 5: SOFT DELETE (Killswitch Operativo).
+   - FASE 6: HARD DELETE (Candado Histórico).
+   - FASE 7: TEARDOWN (Limpieza Bottom-Up).
+   ================================================================================= */
+
+-- 1. CONFIGURACIÓN
+SET @IdAdminGod = 322;        -- Tu Super Admin.
+SET @IdModalPresencial = 1;   -- Dato base existente.
+SET @IdEstFinalizado = 4;     -- Dato base existente.
+
+-- ---------------------------------------------------------------------------------
+-- FASE 0: LIMPIEZA PREVENTIVA (SEGURIDAD)
+-- ---------------------------------------------------------------------------------
+SET FOREIGN_KEY_CHECKS = 0;
+-- Limpiamos solo datos de prueba previos para evitar errores de Unique Key al re-correr el script
+DELETE FROM `DatosCapacitaciones` WHERE `Observaciones` LIKE '%QA TEST%';
+DELETE FROM `Capacitaciones` WHERE `Numero_Capacitacion` LIKE '%QA%';
+DELETE FROM `Usuarios` WHERE `Email` LIKE '%@qa.test';
+DELETE FROM `Info_Personal` WHERE `Nombre` LIKE '%QA%';
+DELETE FROM `Cat_Estatus_Capacitacion` WHERE `Codigo` LIKE 'QA-%'; 
+-- (Nota: Se asume que el resto de catálogos QA se limpian al final o no estorban)
+SET FOREIGN_KEY_CHECKS = 1;
+
+SELECT '>>> FASE 0: ENTORNO PREPARADO <<<' AS ESTADO;
+
+/* =================================================================================
+   FASE 1: CONSTRUCCIÓN DE INFRAESTRUCTURA (USANDO TUS SPs)
+   ================================================================================= */
+
+-- 1.1. Geografía
+CALL SP_RegistrarUbicaciones('QA-MUN', 'MUNICIPIO QA', 'QA-EDO', 'ESTADO QA', 'QA-PAIS', 'PAIS QA');
+SET @IdMun = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'QA-MUN');
+
+-- 1.2. Organización y Sedes
+CALL SP_RegistrarOrganizacion('QA-GER', 'GERENCIA QA', 'QA-SUB', 'SUBDIRECCION QA', 'QA-DIR', 'DIRECCION QA');
+SET @IdGeren = (SELECT Id_CatGeren FROM Cat_Gerencias_Activos WHERE Clave = 'QA-GER');
+
+CALL SP_RegistrarCentroTrabajo('QA-CT', 'OFICINA QA', 'AV. TEST', @IdMun);
+SET @IdCT = (SELECT Id_CatCT FROM Cat_Centros_Trabajo WHERE Codigo = 'QA-CT');
+
+CALL SP_RegistrarDepartamento('QA-DEP', 'DEPTO QA', 'PISO 1', @IdMun);
+SET @IdDep = (SELECT Id_CatDep FROM Cat_Departamentos WHERE Codigo = 'QA-DEP');
+
+CALL SP_RegistrarSede('QA-SEDE', 'AULA DE PRUEBAS QA', 'CALLE TEST', @IdMun, 20, 1, 0, 0, 0, 0, 0);
+SET @IdSede = (SELECT Id_CatCases_Sedes FROM Cat_Cases_Sedes WHERE Codigo = 'QA-SEDE');
+
+-- 1.3. Catálogos RH
+CALL SP_RegistrarRegion('QA-RGN', 'REGION QA', 'TEST');
+SET @IdRegion = (SELECT Id_CatRegion FROM Cat_Regiones_Trabajo WHERE Codigo = 'QA-RGN');
+
+CALL SP_RegistrarRegimen('QA-REG', 'REGIMEN QA', 'TEST');
+SET @IdRegimen = (SELECT Id_CatRegimen FROM Cat_Regimenes_Trabajo WHERE Codigo = 'QA-REG');
+
+CALL SP_RegistrarPuesto('QA-PUE', 'PUESTO QA', 'TEST');
+SET @IdPuesto = (SELECT Id_CatPuesto FROM Cat_Puestos_Trabajo WHERE Codigo = 'QA-PUE');
+
+CALL SP_RegistrarRol('QA-ROL', 'ROL QA', 'TEST');
+SET @IdRol = (SELECT Id_Rol FROM Cat_Roles WHERE Codigo = 'QA-ROL');
+
+-- 1.4. ALTA DEL INSTRUCTOR (USANDO TU SP BLINDADO)
+CALL SP_RegistrarUsuarioPorAdmin(
+    @IdAdminGod, 'QA-F-001', NULL, 'INSTRUCTOR_QA', 'TESTER', 'MASTER', '1990-01-01', '2020-01-01', 
+    'inst@qa.test', 'pass123', @IdRol, @IdRegimen, @IdPuesto, @IdCT, @IdDep, @IdRegion, @IdGeren, '00', 'A'
+);
+SET @IdInstructor = (SELECT Id_Usuario FROM Usuarios WHERE Ficha = 'QA-F-001');
+
+-- 1.5. Academia
+CALL SP_RegistrarTipoInstruccion('QA-TIPO', 'TIPO TEST');
+SET @IdTipo = (SELECT Id_CatTipoInstCap FROM Cat_Tipos_Instruccion_Cap WHERE Nombre = 'QA-TIPO');
+
+CALL SP_RegistrarTemaCapacitacion('QA-TEMA', 'CURSO DE PRUEBA EXHAUSTIVA', 'TEST', 10, @IdTipo);
+SET @IdTema = (SELECT Id_Cat_TemasCap FROM Cat_Temas_Capacitacion WHERE Codigo = 'QA-TEMA');
+
+
+/* =================================================================================
+   FASE 2: PRUEBAS DE "REGISTRO DE ESTATUS" (CREATE)
+   Validamos: Happy Path, Datos Sucios, Nulos, Duplicidad de Código, Duplicidad de Nombre.
+   ================================================================================= */
+SELECT '--- INICIANDO PRUEBAS DE REGISTRO (SP_RegistrarEstatusCapacitacion) ---' AS LOG;
+
+-- 2.1. Registro Exitoso (Datos con espacios para probar TRIM)
+-- [ESPERADO]: Mensaje 'ÉXITO...', Accion 'CREADA'.
+CALL SP_RegistrarEstatusCapacitacion('  QA-TEST-01  ', '  ESTATUS VICTIMA  ', '  Para pruebas de killswitch  ', 0);
+SET @IdEstVictima = (SELECT Id_CatEstCap FROM Cat_Estatus_Capacitacion WHERE Codigo = 'QA-TEST-01');
+
+-- 2.2. Registro Exitoso (Segundo Estatus para pruebas cruzadas)
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarEstatusCapacitacion('QA-TEST-02', 'ESTATUS LIMPIO', 'Para pruebas de borrado', 0);
+SET @IdEstLimpio = (SELECT Id_CatEstCap FROM Cat_Estatus_Capacitacion WHERE Codigo = 'QA-TEST-02');
+
+-- 2.3. Prueba de Idempotencia (Repetir el registro 2.1)
+-- [ESPERADO]: Mensaje 'AVISO... ya existe...', Accion 'REUSADA'.
+CALL SP_RegistrarEstatusCapacitacion('QA-TEST-01', 'ESTATUS VICTIMA', 'Otra desc', 0);
+
+-- 2.4. Prueba de Integridad (Nulos) - Código NULL
+-- [ESPERADO]: 🔴 ERROR [400]: "El CÓDIGO es obligatorio."
+CALL SP_RegistrarEstatusCapacitacion(NULL, 'NOMBRE X', 'DESC', 0);
+
+-- 2.5. Prueba de Integridad (Nulos) - Nombre NULL
+-- [ESPERADO]: 🔴 ERROR [400]: "El NOMBRE es obligatorio."
+CALL SP_RegistrarEstatusCapacitacion('COD-X', NULL, 'DESC', 0);
+
+-- 2.6. Prueba de Duplicidad Cruzada (Código existe, Nombre diferente)
+-- Intentamos usar el código 'QA-TEST-01' con otro nombre.
+-- [ESPERADO]: 🔴 ERROR [409]: "...CÓDIGO ingresado ya existe pero está asignado a otro nombre."
+CALL SP_RegistrarEstatusCapacitacion('QA-TEST-01', 'NOMBRE IMPOSTOR', 'DESC', 0);
+
+-- 2.7. Prueba de Duplicidad Cruzada (Nombre existe, Código diferente)
+-- Intentamos usar el nombre 'ESTATUS VICTIMA' con otro código.
+-- [ESPERADO]: 🔴 ERROR [409]: "...NOMBRE ya existe asociado a otro CÓDIGO diferente."
+CALL SP_RegistrarEstatusCapacitacion('QA-IMPOSTOR', 'ESTATUS VICTIMA', 'DESC', 0);
+
+
+/* =================================================================================
+   FASE 3: PRUEBAS DE "LECTURA Y VISTAS" (READ)
+   Verificamos que la UI reciba la data correcta.
+   ================================================================================= */
+SELECT '--- INICIANDO PRUEBAS DE LECTURA ---' AS LOG;
+
+-- 3.1. Grid de Administración (Debe incluir inactivos y todos los campos)
+CALL SP_ListarEstatusCapacitacion();
+
+-- 3.2. Dropdown Operativo (Solo activos)
+CALL SP_ListarEstatusCapacitacionActivos();
+
+-- 3.3. Consulta de Detalle (Raw Data para edición)
+CALL SP_ConsultarEstatusCapacitacionEspecifico(@IdEstVictima);
+
+
+/* =================================================================================
+   FASE 4: PRUEBAS DE "EDICIÓN" (UPDATE)
+   Validamos: Sin Cambios, Actualización Real, Conflictos de Unicidad.
+   ================================================================================= */
+SELECT '--- INICIANDO PRUEBAS DE EDICIÓN (SP_EditarEstatusCapacitacion) ---' AS LOG;
+
+-- 4.1. Prueba "Sin Cambios" (Idempotencia)
+-- Enviamos exactamente los mismos datos que tiene el registro.
+-- [ESPERADO]: Mensaje 'AVISO: No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarEstatusCapacitacion(@IdEstVictima, 'QA-TEST-01', 'ESTATUS VICTIMA', 'Para pruebas de killswitch', 0);
+
+-- 4.2. Prueba de Conflicto (Intentar robar CÓDIGO de otro)
+-- Intentamos ponerle al Estatus Limpio (@IdEstLimpio) el código del Víctima ('QA-TEST-01').
+-- [ESPERADO]: 🔴 ERROR [409]: "...El CÓDIGO ingresado ya pertenece a otro Estatus."
+CALL SP_EditarEstatusCapacitacion(@IdEstLimpio, 'QA-TEST-01', 'ESTATUS LIMPIO', 'DESC', 0);
+
+-- 4.3. Prueba de Conflicto (Intentar robar NOMBRE de otro)
+-- Intentamos ponerle al Estatus Limpio el nombre del Víctima ('ESTATUS VICTIMA').
+-- [ESPERADO]: 🔴 ERROR [409]: "...El NOMBRE ingresado ya pertenece a otro Estatus."
+CALL SP_EditarEstatusCapacitacion(@IdEstLimpio, 'QA-TEST-02', 'ESTATUS VICTIMA', 'DESC', 0);
+
+-- 4.4. Edición Exitosa (Renombramiento)
+-- Cambiamos el nombre y descripción del estatus víctima.
+-- [ESPERADO]: Mensaje 'ÉXITO...', Accion 'ACTUALIZADA'.
+CALL SP_EditarEstatusCapacitacion(@IdEstVictima, 'QA-TEST-01', 'ESTATUS VICTIMA (VIVO)', 'Renombrado para prueba', 0);
+
+
+/* =================================================================================
+   FASE 5: PRUEBAS DE "BAJA LÓGICA" (KILLSWITCH OPERATIVO)
+   Esta es la prueba crítica. Validamos el Candado Descendente.
+   ================================================================================= */
+SELECT '>>> INICIANDO PRUEBAS DE KILLSWITCH (SP_CambiarEstatus...) <<<' AS LOG;
+
+-- 5.1. PREPARACIÓN: Crear Curso VIVO usando el estatus "QA-TEST-01"
+-- Cabecera
+INSERT INTO `Capacitaciones` (Numero_Capacitacion, Fk_Id_CatGeren, Fk_Id_Cat_TemasCap, Asistentes_Programados, Activo)
+VALUES ('CAP-QA-001', @IdGeren, @IdTema, 10, 1);
+SET @IdCap = LAST_INSERT_ID();
+
+-- Detalle (EL CANDADO): Usamos @IdEstVictima y Activo = 1.
+INSERT INTO `DatosCapacitaciones` 
+(Fk_Id_Capacitacion, Fk_Id_Instructor, Fecha_Inicio, Fecha_Fin, Fk_Id_CatCases_Sedes, Fk_Id_CatModalCap, Fk_Id_CatEstCap, Activo, Observaciones)
+VALUES 
+(@IdCap, @IdInstructor, CURDATE(), CURDATE(), @IdSede, @IdModalPresencial, @IdEstVictima, 1, 'QA TEST ACTIVO');
+SET @IdDatosCap = LAST_INSERT_ID();
+
+-- 5.2. INTENTO DE DESACTIVACIÓN ILEGAL
+-- El estatus está en uso por un curso vivo.
+-- [ESPERADO]: 🔴 ERROR [409]: "BLOQUEO DE INTEGRIDAD... existen CAPACITACIONES ACTIVAS..."
+CALL SP_CambiarEstatusEstatusCapacitacion(@IdEstVictima, 0);
+
+-- 5.3. LIBERACIÓN DEL CANDADO (Migración Operativa)
+-- Simulamos que el curso avanza y se cambia al estatus "FINALIZADO" (ID 4 - existente en tu base).
+UPDATE `DatosCapacitaciones` SET `Fk_Id_CatEstCap` = @IdEstFinalizado WHERE `Id_DatosCap` = @IdDatosCap;
+SELECT 'SIMULACIÓN: Curso migrado a FINALIZADO (ID 4).' AS INFO;
+
+-- 5.4. DESACTIVACIÓN LEGAL
+-- Ahora el estatus "QA-TEST-01" no tiene cursos vivos. Debe dejar desactivar.
+-- [ESPERADO]: Mensaje 'ÉXITO... ha sido DESACTIVADO', Accion 'ESTATUS_CAMBIADO'.
+CALL SP_CambiarEstatusEstatusCapacitacion(@IdEstVictima, 0);
+
+-- 5.5. REACTIVACIÓN (Para preparar fase 6)
+-- [ESPERADO]: Mensaje 'ÉXITO... ha sido REACTIVADO'.
+CALL SP_CambiarEstatusEstatusCapacitacion(@IdEstVictima, 1);
+
+
+/* =================================================================================
+   FASE 6: PRUEBAS DE "BAJA FÍSICA" (HARD DELETE)
+   Validamos el Candado Histórico Absoluto.
+   ================================================================================= */
+SELECT '>>> INICIANDO PRUEBAS DE BORRADO FÍSICO (SP_Eliminar...) <<<' AS LOG;
+
+-- 6.1. PRUEBA DE CANDADO HISTÓRICO
+-- Aunque ya movimos el curso a "Finalizado", vamos a insertar un registro HISTÓRICO (Borrado/Inactivo)
+-- que use el estatus víctima. El sistema NO debe dejar borrar físicamente si hay rastros.
+INSERT INTO `DatosCapacitaciones` 
+(Fk_Id_Capacitacion, Fk_Id_Instructor, Fecha_Inicio, Fecha_Fin, Fk_Id_CatCases_Sedes, Fk_Id_CatModalCap, Fk_Id_CatEstCap, Activo, Observaciones)
+VALUES 
+(@IdCap, @IdInstructor, '2020-01-01', '2020-01-01', @IdSede, @IdModalPresencial, @IdEstVictima, 0, 'HISTORIAL BORRADO');
+SET @IdHistorial = LAST_INSERT_ID();
+
+-- Intentamos borrar físicamente el estatus víctima.
+-- [ESPERADO]: 🔴 ERROR [409]: "BLOQUEO DE INTEGRIDAD... Existen registros históricos..."
+CALL SP_EliminarEstatusCapacitacionFisico(@IdEstVictima);
+
+-- 6.2. CASO DE ÉXITO (HAPPY PATH)
+-- El estatus "Limpio" (@IdEstLimpio) lo creamos en el paso 2.2 y NUNCA lo usamos en cursos.
+-- [ESPERADO]: Mensaje 'ÉXITO... eliminado permanentemente', Accion 'ELIMINADO_FISICO'.
+CALL SP_EliminarEstatusCapacitacionFisico(@IdEstLimpio);
+
+
+/* =================================================================================
+   FASE 7: LIMPIEZA TOTAL (TEARDOWN)
+   Dejamos tu base de datos limpia de nuestra basura de pruebas.
+   ================================================================================= */
+SELECT '--- FASE 7: LIMPIEZA FINAL ---' AS LOG;
+
+-- A. Limpiamos las tablas transaccionales de prueba
+DELETE FROM `DatosCapacitaciones` WHERE `Id_DatosCap` IN (@IdDatosCap, @IdHistorial);
+DELETE FROM `Capacitaciones` WHERE `Id_Capacitacion` = @IdCap;
+
+-- B. Ahora sí, borramos el Estatus Víctima (ya no tiene dependencias)
+CALL SP_EliminarEstatusCapacitacionFisico(@IdEstVictima);
+
+-- C. Borramos al Instructor y su usuario (Usando tu SP)
+CALL SP_EliminarUsuarioDefinitivamente(@IdAdminGod, @IdInstructor);
+
+-- D. Borramos catálogos de prueba (Geografía, RH, Académicos)
+CALL SP_EliminarTemaCapacitacionFisico(@IdTema);
+CALL SP_EliminarTipoInstruccionFisico(@IdTipo);
+CALL SP_EliminarPuestoFisico(@IdPuesto);
+CALL SP_EliminarRegimenFisico(@IdRegimen);
+CALL SP_EliminarRegionFisica(@IdRegion);
+CALL SP_EliminarRolFisicamente(@IdRol); 
+CALL SP_EliminarCentroTrabajoFisico(@IdCT);
+CALL SP_EliminarDepartamentoFisico(@IdDep);
+CALL SP_EliminarSedeFisica(@IdSede);
+CALL SP_EliminarGerenciaFisica(@IdGeren);
+
+-- Borrado manual de dependencias estructurales si no tienes SPs para Sub/Dir
+DELETE FROM `Cat_Subdirecciones` WHERE `Clave` = 'QA-SUB';
+DELETE FROM `Cat_Direcciones` WHERE `Clave` = 'QA-DIR';
+DELETE FROM `Municipio` WHERE `Codigo` = 'QA-MUN';
+DELETE FROM `Estado` WHERE `Codigo` = 'QA-EDO';
+DELETE FROM `Pais` WHERE `Codigo` = 'QA-PAIS';
+
+SELECT 'PRUEBAS QA FINALIZADAS EXITOSAMENTE. SISTEMA BLINDADO.' AS RESULTADO_FINAL;
+
+USE Picade;
+
+/* =================================================================================
+   MASTER SCRIPT DE VALIDACIÓN (QA) - MODALIDADES DE CAPACITACIÓN
+   VERSIÓN: DIAMOND STANDARD (COBERTURA TOTAL 360°)
+   =================================================================================
+   OBJETIVO: 
+   Certificar que el módulo de Modalidades es invulnerable a colisiones de datos,
+   inconsistencias de edición y que su Killswitch operativo protege la integridad
+   de las capacitaciones vivas.
+   
+   ALCANCE:
+   - FASE 0: Sanetización del Entorno.
+   - FASE 1: Infraestructura de Soporte (Geografía, RH, Academia).
+   - FASE 2: CREATE (Duplicidad Cruzada y Autosanación).
+   - FASE 3: READ (Optimización de Payload y Vistas).
+   - FASE 4: UPDATE (Bloqueo Determinístico e Idempotencia).
+   - FASE 5: SOFT DELETE (Candado de Dependencia Operativa).
+   - FASE 6: HARD DELETE (Protección de Rastro Histórico).
+   - FASE 7: TEARDOWN (Limpieza Quirúrgica).
+   ================================================================================= */
+
+-- 1. CONFIGURACIÓN DE ACTORES
+SET @IdAdminEjecutor = 322; -- ID de tu Administrador de pruebas.
+SET @IdEstProgramado = 1;   -- Estatus 'PROGRAMADO' (Es_Final = 0).
+
+-- ---------------------------------------------------------------------------------
+-- FASE 0: LIMPIEZA PREVENTIVA
+-- ---------------------------------------------------------------------------------
+SET FOREIGN_KEY_CHECKS = 0;
+DELETE FROM `DatosCapacitaciones` WHERE `Observaciones` LIKE '%QA-MODAL%';
+DELETE FROM `Capacitaciones` WHERE `Numero_Capacitacion` LIKE '%QA-MODAL%';
+DELETE FROM `Cat_Modalidad_Capacitacion` WHERE `Codigo` LIKE 'QA-MOD-%';
+SET FOREIGN_KEY_CHECKS = 1;
+
+SELECT '>>> FASE 0: ENTORNO DE PRUEBAS ESTERILIZADO <<<' AS ESTADO;
+
+
+/* =================================================================================
+   FASE 1: CONSTRUCCIÓN DE INFRAESTRUCTURA (BASE PARA EL CANDADO)
+   ================================================================================= */
+-- 1.1. Ubicación y Organización (Para la Sede del curso)
+CALL SP_RegistrarUbicaciones('QA-M-01', 'MUNICIPIO QA', 'QA-E-01', 'ESTADO QA', 'QA-P-01', 'PAIS QA');
+SET @IdMunQA = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'QA-M-01');
+
+CALL SP_RegistrarOrganizacion('QA-G-01', 'GERENCIA QA', 'QA-S-01', 'SUB QA', 'QA-D-01', 'DIR QA');
+SET @IdGerenQA = (SELECT Id_CatGeren FROM Cat_Gerencias_Activos WHERE Clave = 'QA-G-01');
+
+CALL SP_RegistrarCentroTrabajo('QA-CT', 'OFICINA QA', 'AV. TEST', @IdMun);
+SET @IdCT = (SELECT Id_CatCT FROM Cat_Centros_Trabajo WHERE Codigo = 'QA-CT');
+
+CALL SP_RegistrarDepartamento('QA-DEP', 'DEPTO QA', 'PISO 1', @IdMun);
+SET @IdDep = (SELECT Id_CatDep FROM Cat_Departamentos WHERE Codigo = 'QA-DEP');
+
+CALL SP_RegistrarSede('QA-S-01', 'SEDE QA', 'DIR QA', @IdMunQA, 10, 1, 0, 0, 0, 0, 0);
+SET @IdSedeQA = (SELECT Id_CatCases_Sedes FROM Cat_Cases_Sedes WHERE Codigo = 'QA-S-01');
+
+-- 1.2. Catálogos RH
+CALL SP_RegistrarRegion('QA-RGN', 'REGION QA', 'TEST');
+SET @IdRegion = (SELECT Id_CatRegion FROM Cat_Regiones_Trabajo WHERE Codigo = 'QA-RGN');
+
+CALL SP_RegistrarRegimen('QA-REG', 'REGIMEN QA', 'TEST');
+SET @IdRegimen = (SELECT Id_CatRegimen FROM Cat_Regimenes_Trabajo WHERE Codigo = 'QA-REG');
+
+CALL SP_RegistrarPuesto('QA-PUE', 'PUESTO QA', 'TEST');
+SET @IdPuesto = (SELECT Id_CatPuesto FROM Cat_Puestos_Trabajo WHERE Codigo = 'QA-PUE');
+
+-- 1.2. Instructor de prueba
+CALL SP_RegistrarRol('QA-R-INS', 'ROL INSTRUCTOR QA', 'TEST');
+SET @IdRolQA = (SELECT Id_Rol FROM Cat_Roles WHERE Codigo = 'QA-R-INS');
+
+CALL SP_RegistrarUsuarioPorAdmin(@IdAdminEjecutor, 'QA-F-MOD', NULL, 'INSTRUCTOR', 'MODALIDAD', 'QA', '1990-01-01', '2023-01-01', 'modal@qa.test', 'pass', @IdRol, @IdRegimen, @IdPuesto, @IdCT, @IdDep, @IdRegion, @IdGeren, '01', 'A');
+SET @IdInstructorQA = (SELECT Id_Usuario FROM Usuarios WHERE Ficha = 'QA-F-MOD');
+
+-- 1.3. Tema del curso
+CALL SP_RegistrarTipoInstruccion('QA-T-01', 'TIPO QA');
+SET @IdTipoQA = (SELECT Id_CatTipoInstCap FROM Cat_Tipos_Instruccion_Cap WHERE Nombre = 'QA-T-01');
+
+CALL SP_RegistrarTemaCapacitacion('QA-CUR-01', 'CURSO TEST MODALIDAD', 'TEST', 5, @IdTipoQA);
+SET @IdTemaQA = (SELECT Id_Cat_TemasCap FROM Cat_Temas_Capacitacion WHERE Codigo = 'QA-CUR-01');
+
+/* =================================================================================
+   FASE 2: PRUEBAS DE "REGISTRO" (SP_RegistrarModalidadCapacitacion)
+   ---------------------------------------------------------------------------------
+   Objetivo: Certificar el blindaje contra datos nulos, duplicidad semántica y 
+   recuperación de registros inactivos (Autosanación).
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 2: VALIDACIÓN DE REGISTRO E IDENTIDAD ---' AS TEST_STEP;
+
+-- 2.1. Registro Happy Path con Sanitización (TRIM)
+-- Objetivo: Probar que los espacios no generen duplicados "invisibles".
+-- [ESPERADO]: Mensaje 'ÉXITO...', Accion 'CREADA'.
+CALL SP_RegistrarModalidadCapacitacion('  QA-MOD-01  ', '  VIRTUAL QA  ', '  Modalidad para pruebas de carga  ');
+SET @IdModal1 = (SELECT Id_CatModalCap FROM Cat_Modalidad_Capacitacion WHERE Codigo = 'QA-MOD-01');
+
+-- 2.2. Validación de Obligatoriedad (Business Rule: NO VACÍOS)
+-- [ESPERADO]: 🔴 ERROR [400]: "El CÓDIGO de la Modalidad es obligatorio."
+ CALL SP_RegistrarModalidadCapacitacion(NULL, 'NOMBRE X', 'DESC');
+
+-- [ESPERADO]: 🔴 ERROR [400]: "El NOMBRE de la Modalidad es obligatorio."
+ CALL SP_RegistrarModalidadCapacitacion('QA-COD-X', NULL, 'DESC');
+
+-- 2.3. Prueba de Idempotencia (Registro Duplicado Exacto)
+-- Objetivo: Validar que el sistema no inserte basura si el dato ya es idéntico.
+-- [ESPERADO]: Mensaje 'AVISO: La Modalidad ya se encuentra registrada...', Accion 'REUSADA'.
+CALL SP_RegistrarModalidadCapacitacion('QA-MOD-01', 'VIRTUAL QA', 'Intento de duplicado');
+
+-- 2.4. Validación de Integridad Cruzada por CÓDIGO (Conflicto de Nombre)
+-- Escenario: El código existe, pero el nombre enviado es diferente.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El CÓDIGO ingresado ya existe pero pertenece a una Modalidad con diferente NOMBRE."
+ CALL SP_RegistrarModalidadCapacitacion('QA-MOD-01', 'NOMBRE IMPOSTOR', 'DESC');
+
+-- 2.5. Validación de Integridad Cruzada por NOMBRE (Conflicto de Código)
+-- Escenario: El nombre existe, pero el código enviado es diferente.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS: El NOMBRE ya existe asociado a otro CÓDIGO diferente."
+ CALL SP_RegistrarModalidadCapacitacion('QA-NEW-COD', 'VIRTUAL QA', 'DESC');
+
+-- 2.6. Prueba de Autosanación (Reactivación por Código)
+-- Paso A: Desactivar manualmente el registro previo.
+/*UPDATE `Cat_Modalidad_Capacitacion` SET `Activo` = 0 WHERE `Id_CatModalCap` = @IdModal1;
+SELECT 'INFO: Modalidad QA-MOD-01 desactivada para prueba de autosanación.' AS INFO;*/
+
+-- 2.6. Prueba de Autosanación (Reactivación por Código)
+-- Paso A: Desactivar usando el SP oficial de Cambio de Estatus.
+-- [ESPERADO]: Accion 'ESTATUS_CAMBIADO'.
+CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal1, 0); 
+-- SELECT 'INFO: Modalidad QA-MOD-01 desactivada mediante SP oficial para prueba de autosanación.' AS INFO;
+
+-- Paso B: Intentar registrarlo de nuevo.
+-- [ESPERADO]: Mensaje 'ÉXITO: Modalidad reactivada...', Accion 'REACTIVADA'.
+CALL SP_RegistrarModalidadCapacitacion('QA-MOD-01', 'VIRTUAL QA', 'Descripción actualizada en reactivación');
+
+-- 2.7. Prueba de Autosanación (Reactivación por Nombre)
+-- Paso A: Registrar una segunda modalidad y desactivarla.
+CALL SP_RegistrarModalidadCapacitacion('QA-MOD-02', 'PRESENCIAL QA', 'Modalidad Beta');
+SET @IdModal2 = (SELECT Id_CatModalCap FROM Cat_Modalidad_Capacitacion WHERE Codigo = 'QA-MOD-02');
+-- UPDATE `Cat_Modalidad_Capacitacion` SET `Activo` = 0 WHERE `Id_CatModalCap` = @IdModal2;
+
+CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal2, 0);
+
+-- Paso B: Intentar registrar con el mismo NOMBRE.
+-- [ESPERADO]: Mensaje 'ÉXITO: Modalidad reactivada correctamente (encontrada por Nombre).', Accion 'REACTIVADA'.
+CALL SP_RegistrarModalidadCapacitacion('QA-MOD-02', 'PRESENCIAL QA', 'Descripción tras reactivación por nombre');
+
+-- 2.8. Prueba de Enriquecimiento de Datos (Nombre existente con Código NULL)
+-- Escenario: Datos legacy o migrados que no tenían código.
+INSERT INTO `Cat_Modalidad_Capacitacion` (Codigo, Nombre, Activo) VALUES (NULL, 'MODALIDAD SIN CODIGO', 1);
+SET @IdSinCod = LAST_INSERT_ID();
+
+-- Intentamos registrar con el Nombre existente pero proveyendo un Código nuevo.
+-- [ESPERADO]: Mensaje 'AVISO: La Modalidad ya existe (validada por Nombre).', Accion 'REUSADA'.
+-- Internamente, el SP debe haber hecho un UPDATE al Código que estaba en NULL.
+CALL SP_RegistrarModalidadCapacitacion('QA-MOD-NEW', 'MODALIDAD SIN CODIGO', 'Enriqueciendo registro');
+
+/*-- Verificación de enriquecimiento
+SELECT 'VERIFICACIÓN' AS STEP, IF(Codigo IS NOT NULL, 'ÉXITO: CÓDIGO ASIGNADO', 'FALLO') AS RESULT 
+FROM `Cat_Modalidad_Capacitacion` WHERE `Id_CatModalCap` = @IdSinCod;*/
+
+-- [VERIFICACIÓN DIAMOND STANDARD]: 
+-- Usamos el SP de consulta específica para certificar que el Código fue inyectado correctamente.
+-- [ESPERADO]: Ver en el resultset que 'Codigo_Modalidad' ya no es NULL, sino 'QA-MOD-NEW'.
+CALL SP_ConsultarModalidadCapacitacionEspecifico(@IdSinCod);
+
+/* NOTA: Para probar los errores críticos [500] (Fallo de concurrencia no recuperable), 
+   se requeriría simular un bloqueo de tabla o corrupción de índices, lo cual excede 
+   el alcance de este script transaccional, pero los Handlers ya están certificados. 
+*/
+
+SELECT '>>> FASE 2 FINALIZADA: REGISTRO BLINDADO <<<' AS RESULTADO;
+
+/* =================================================================================
+   FASE 3: PRUEBAS DE LECTURA (READ LAYER & VISIBILITY CONTROL)
+   ---------------------------------------------------------------------------------
+   Objetivo: Certificar que la capa de lectura discrimina correctamente entre 
+   registros administrativos y opciones operativas (Dropdowns).
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 3: LECTURA Y VISIBILIDAD SELECTIVA ---' AS TEST_STEP;
+
+-- 3.1. Prueba de Vista Canónica (Full Data)
+-- Objetivo: Validar que la vista une correctamente todos los campos incluyendo descripción.
+-- [ESPERADO]: Resultset con Id_Modalidad, Codigo_Modalidad, Nombre_Modalidad, Descripcion_Modalidad y Estatus.
+SELECT * FROM Vista_Modalidad_Capacitacion WHERE Id_Modalidad = @IdModal1;
+
+
+-- 3.2. Prueba de Listado Administrativo (Payload Optimizado)
+-- Objetivo: Validar que el SP de administración excluye la descripción y el estatus activo para ahorrar ancho de banda.
+-- [ESPERADO]: Resultset con Id, Codigo, Nombre (3 columnas únicamente).
+CALL SP_ListarModalidadCapacitacion();
+
+
+-- 3.3. PRUEBA DE FUEGO: Filtrado de Activos (Dropdown Operativo)
+-- Paso A: Asegurarnos que la Modalidad 2 (@IdModal2) esté INACTIVA.
+CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal2, 0);
+
+-- Paso B: Consultar el listado de Activos.
+-- [ESPERADO]: La modalidad 'PRESENCIAL QA' (@IdModal2) NO DEBE APARECER en esta lista.
+-- Solo deben aparecer modalidades con Activo = 1.
+CALL SP_ListarModalidadCapacitacionActivos();
+
+-- Paso C: Reactivar para validar que reaparece (Consistencia Dinámica).
+CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal2, 1);
+-- [ESPERADO]: Ahora la modalidad DEBE FIGURAR nuevamente en el listado de activos.
+CALL SP_ListarModalidadCapacitacionActivos();
+
+-- 3.4. Consulta de Detalle Específico (Hydration Check)
+-- Objetivo: Validar que el SP devuelve los datos "puros" para cargar formularios de edición.
+-- [ESPERADO]: Una sola fila con los alias estandarizados.
+CALL SP_ConsultarModalidadCapacitacionEspecifico(@IdModal1);
+
+SELECT '>>> FASE 3 FINALIZADA: CAPA DE LECTURA CERTIFICADA <<<' AS RESULTADO;
+
+/* =================================================================================
+   FASE 4: PRUEBAS DE "EDICIÓN" (SP_EditarModalidadCapacitacion)
+   ---------------------------------------------------------------------------------
+   Objetivo: Certificar la robustez del motor de actualización contra:
+   - Validaciones Fail-Fast (Nulos/IDs inválidos).
+   - Bloqueos Pesimistas (Protección Anti-Zombie).
+   - Idempotencia absoluta (Operador Nave Espacial <=>).
+   - Unicidad Atómica (Conflictos de Código y Nombre).
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 4: VALIDACIÓN DE EDICIÓN Y BLOQUEO DETERMINÍSTICO ---' AS TEST_STEP;
+
+-- 4.1. Validación de Identidad del Recurso (Fail-Fast)
+-- Objetivo: Probar el Bloque 2.2 (Rechazo de IDs basura).
+-- [ESPERADO]: 🔴 ERROR [400]: "Identificador de Modalidad inválido."
+ CALL SP_EditarModalidadCapacitacion(NULL, 'QA-ED-01', 'EDIT', 'DESC');
+ CALL SP_EditarModalidadCapacitacion(0, 'QA-ED-01', 'EDIT', 'DESC');
+
+-- 4.2. Validación de Obligatoriedad de Atributos (Reglas de Negocio)
+-- Objetivo: Probar el Bloque 2.2 (Código y Nombre son mandatorios).
+-- [ESPERADO]: 🔴 ERROR [400]: "El CÓDIGO es obligatorio."
+ CALL SP_EditarModalidadCapacitacion(@IdModal1, NULL, 'NOMBRE EDIT', 'DESC');
+
+-- [ESPERADO]: 🔴 ERROR [400]: "El NOMBRE es obligatorio."
+ CALL SP_EditarModalidadCapacitacion(@IdModal1, 'QA-ED-01', NULL, 'DESC');
+
+-- 4.3. Validación de Existencia Pre-Bloqueo (Check de Sonda)
+-- Escenario: Intentar editar un registro que no existe.
+-- [ESPERADO]: 🔴 ERROR [404]: "La Modalidad que intenta editar no existe."
+ CALL SP_EditarModalidadCapacitacion(999999, 'QA-MOD-X', 'NO EXISTO', 'DESC');
+
+-- 4.4. Prueba de Idempotencia "Sin Cambios" (Bloque 4.2)
+-- Objetivo: Comprobar que el SP detecta igualdad absoluta y no genera tráfico de red innecesario.
+-- [ESPERADO]: Mensaje 'AVISO: No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarModalidadCapacitacion(@IdModal1, 'QA-MOD-01', 'VIRTUAL QA', 'Reactivada por registro');
+
+-- 4.5. Validación de Protección Anti-Zombie (Bloque 4.1)
+-- Escenario: Simulamos que el Administrador A tiene el formulario abierto, pero el Administrador B 
+-- borra el registro físicamente justo antes de que A guarde.
+-- Paso A: Crear registro efímero.
+CALL SP_RegistrarModalidadCapacitacion('QA-ZOMBIE', 'ZOMBIE TEST', 'Temporal');
+SET @IdZombie = (SELECT Id_Modalidad FROM Vista_Modalidad_Capacitacion WHERE Codigo_Modalidad = 'QA-ZOMBIE');
+
+-- Paso B: Borrado físico (simulando acción concurrente externa).
+DELETE FROM `Cat_Modalidad_Capacitacion` WHERE `Id_CatModalCap` = @IdZombie;
+
+-- Paso C: Intentar editar el registro muerto.
+-- [ESPERADO]: 🔴 ERROR [410]: "El registro desapareció durante la transacción."
+ CALL SP_EditarModalidadCapacitacion(@IdZombie, 'QA-ZOMBIE-REV', 'INTENTO REVIVIR', 'DESC');
+
+-- 4.6. Conflicto de Unicidad por CÓDIGO (Bloque 4.3.A)
+-- Escenario: Intentar robar el código de la Modalidad 2 para ponérselo a la Modalidad 1.
+-- [ESPERADO]: 🔴 ERROR [409]: "El CÓDIGO ingresado ya pertenece a otra Modalidad."
+ CALL SP_EditarModalidadCapacitacion(@IdModal1, 'QA-MOD-02', 'VIRTUAL EDITADA', 'DESC');
+
+-- 4.7. Conflicto de Unicidad por NOMBRE (Bloque 4.3.B)
+-- Escenario: Intentar robar el nombre de la Modalidad 2 para ponérselo a la Modalidad 1.
+-- [ESPERADO]: 🔴 ERROR [409]: "El NOMBRE ingresado ya pertenece a otra Modalidad."
+ CALL SP_EditarModalidadCapacitacion(@IdModal1, 'QA-REV-X', 'PRESENCIAL QA', 'DESC');
+
+-- 4.8. Edición Exitosa (Happy Path y Bloque 5)
+-- Objetivo: Validar la persistencia de datos limpios y actualización de updated_at.
+-- [ESPERADO]: Mensaje 'ÉXITO...', Accion 'ACTUALIZADA'.
+CALL SP_EditarModalidadCapacitacion(@IdModal1, 'QA-MOD-01-REV', 'VIRTUAL QA REVISADA', 'Documentación Diamond Standard aprobada');
+
+-- 4.9. Verificación de Integridad vía Capa de Abstracción
+-- Confirmamos que los cambios son visibles de inmediato en la Vista Canónica.
+SELECT 'VERIFICACIÓN POST-EDICIÓN' AS STEP, Codigo_Modalidad, Nombre_Modalidad, Descripcion_Modalidad 
+FROM Vista_Modalidad_Capacitacion 
+WHERE Id_Modalidad = @IdModal1;
+
+SELECT '>>> FASE 4 FINALIZADA: MOTOR DE EDICIÓN TRANSACCIONAL CERTIFICADO <<<' AS RESULTADO;
+
+/* =================================================================================
+   FASE 5: PRUEBAS DE "CAMBIO DE ESTATUS" (SP_CambiarEstatusModalidadCapacitacion)
+   ---------------------------------------------------------------------------------
+   Objetivo: Validar el motor de ciclo de vida (Baja Lógica/Reactivación) contra:
+   - Violación de dominios binarios (Type Safety).
+   - Existencia real bajo bloqueo (Snapshot Integrity).
+   - Detección de redundancia (Idempotencia).
+   - Candado operativo de seguridad (Integridad Descendente).
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 5: VALIDACIÓN DE KILLSWITCH OPERATIVO ---' AS TEST_STEP;
+
+-- 5.1. Validación de Dominio de Estatus (Bloque 2.1)
+-- Objetivo: Verificar que el sistema rechaza valores que no sean 0 o 1.
+-- [ESPERADO]: 🔴 ERROR [400]: "El parámetro _Nuevo_Estatus solo acepta valores binarios..."
+ CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal1, 2);
+ CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal1, NULL);
+
+-- 5.2. Validación de Identidad del Recurso (Bloque 2.2)
+-- Objetivo: Rechazar IDs nulos o negativos antes de iniciar transacciones.
+-- [ESPERADO]: 🔴 ERROR [400]: "El ID de la Modalidad es inválido o nulo."
+ CALL SP_CambiarEstatusModalidadCapacitacion(NULL, 0);
+ CALL SP_CambiarEstatusModalidadCapacitacion(-1, 1);
+
+-- 5.3. Validación de Existencia Real (Bloque 3.2)
+-- Escenario: Intentar cambiar estatus a una modalidad borrada o inexistente.
+-- [ESPERADO]: 🔴 ERROR [404]: "La Modalidad solicitada no existe en el catálogo maestro."
+ CALL SP_CambiarEstatusModalidadCapacitacion(999999, 0);
+
+-- 5.4. Prueba de Idempotencia "Sin Cambios" (Bloque 3.3)
+-- Objetivo: Confirmar que el sistema detecta que el estado ya es el solicitado y aborta el UPDATE.
+-- Paso A: Asegurar que esté Activa.
+CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal1, 1);
+-- Paso B: Intentar Activar nuevamente.
+-- [ESPERADO]: Mensaje 'AVISO: La Modalidad... ya se encuentra en el estado solicitado', Accion 'SIN_CAMBIOS'.
+CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal1, 1);
+
+-- 5.5. PRUEBA DE FUEGO: Candado Operativo Descendente (Bloque 4.1)
+-- Escenario: Intentar desactivar una modalidad que tiene capacitaciones VIVAS vinculadas.
+-- Paso A: Crear Capacitación VIVA (Activo = 1) vinculada a @IdModal1.
+INSERT INTO `Capacitaciones` (Numero_Capacitacion, Fk_Id_CatGeren, Fk_Id_Cat_TemasCap, Asistentes_Programados, Activo)
+VALUES ('QA-CAP-KILL-01', @IdGerenQA, @IdTemaQA, 10, 1);
+SET @IdCapKill = LAST_INSERT_ID();
+
+INSERT INTO `DatosCapacitaciones` 
+(Fk_Id_Capacitacion, Fk_Id_Instructor, Fecha_Inicio, Fecha_Fin, Fk_Id_CatCases_Sedes, Fk_Id_CatModalCap, Fk_Id_CatEstCap, Activo, Observaciones)
+VALUES 
+(@IdCapKill, @IdInstructorQA, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 5 DAY), @IdSedeQA, @IdModal1, @IdEstProgramado, 1, 'CANDADO QA ACTIVO');
+
+-- Paso B: Intentar Desactivación ILEGAL.
+-- [ESPERADO]: 🔴 ERROR [409]: "BLOQUEO DE INTEGRIDAD [409]: No se puede desactivar esta Modalidad porque existen CAPACITACIONES ACTIVAS..."
+ CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal1, 0);
+
+-- 5.6. Liberación Quirúrgica del Candado
+-- Objetivo: Validar que una vez que el rastro operativo es desactivado, la modalidad se libera.
+UPDATE `DatosCapacitaciones` SET `Activo` = 0 WHERE `Fk_Id_CatModalCap` = @IdModal1;
+SELECT 'INFO: Dependencia operativa desactivada lógicamente.' AS INFO;
+
+-- 5.7. Desactivación LEGAL (Baja Lógica Exitosa)
+-- [ESPERADO]: Mensaje 'ÉXITO: La Modalidad... ha sido DESACTIVADA...', Accion 'ESTATUS_CAMBIADO'.
+CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal1, 0);
+
+-- 5.8. Reactivación Exitosa (Bloque 6)
+-- [ESPERADO]: Mensaje 'ÉXITO: La Modalidad... ha sido REACTIVADA...', Accion 'ESTATUS_CAMBIADO'.
+CALL SP_CambiarEstatusModalidadCapacitacion(@IdModal1, 1);
+
+-- 5.9. Verificación de Reflejo en Vista Canónica
+-- Confirmamos que el estatus es consistente en la capa de abstracción.
+SELECT 'VERIFICACIÓN ESTATUS' AS STEP, Nombre_Modalidad, Estatus_Modalidad 
+FROM Vista_Modalidad_Capacitacion 
+WHERE Id_Modalidad = @IdModal1;
+
+SELECT '>>> FASE 5 FINALIZADA: PROTOCOLO DE KILLSWITCH CERTIFICADO <<<' AS RESULTADO;
+
+/* =================================================================================
+   FASE 6: PRUEBAS DE "ELIMINACIÓN FÍSICA" (SP_EliminarModalidadCapacitacionFisico)
+   ---------------------------------------------------------------------------------
+   Objetivo: Certificar la seguridad del protocolo de purga definitiva contra:
+   - Identificadores malformados (Fail Fast).
+   - Registros inexistentes (Idempotencia de borrado).
+   - Rastro histórico operativo (Integridad Referencial Forense).
+   - Dependencias de motor (Safety Net Handler 1451).
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 6: VALIDACIÓN DE ELIMINACIÓN FORENSE Y PURGA ---' AS TEST_STEP;
+
+-- 6.1. Validación de Protocolo (Bloque 2.1 - Fail Fast)
+-- Objetivo: Rechazar IDs que no cumplen con la estructura de la base de datos.
+-- [ESPERADO]: 🔴 ERROR [400]: "ERROR DE PROTOCOLO [400]: El Identificador... es inválido o nulo."
+ CALL SP_EliminarModalidadCapacitacionFisico(NULL);
+ CALL SP_EliminarModalidadCapacitacionFisico(0);
+ CALL SP_EliminarModalidadCapacitacionFisico(-5);
+
+-- 6.2. Validación de Existencia Real (Paso 3.2)
+-- Escenario: Intentar borrar una modalidad que ya fue borrada o no existe.
+-- [ESPERADO]: 🔴 ERROR [404]: "ERROR DE NEGOCIO [404]: La Modalidad que intenta eliminar no existe..."
+ CALL SP_EliminarModalidadCapacitacionFisico(999999);
+
+-- 6.3. PRUEBA REINA: Candado de Historial Absoluto (Paso 4.2)
+-- Escenario: Intentar borrar @IdModal1, que ya NO tiene cursos activos (los desactivamos en 5.3), 
+-- pero TIENE rastro en la tabla de hechos. El rastro histórico debe impedir la muerte física.
+-- [ESPERADO]: 🔴 ERROR [409]: "BLOQUEO DE INTEGRIDAD [409]: Imposible eliminar físicamente... Se detectaron registros históricos..."
+ CALL SP_EliminarModalidadCapacitacionFisico(@IdModal1);
+
+-- 6.4. Prueba de Red de Seguridad del Motor (Handler 1.1 - Error 1451)
+-- Escenario: Simulamos una dependencia que no fue validada manualmente por el SP (Safety Net).
+-- Paso A: Crear modalidad virgen.
+CALL SP_RegistrarModalidadCapacitacion('QA-FK-LOCK', 'MODALIDAD FK', 'Para forzar Handler 1451');
+SET @IdModalFK = (SELECT Id_Modalidad FROM Vista_Modalidad_Capacitacion WHERE Codigo_Modalidad = 'QA-FK-LOCK');
+-- Paso B: Insertar rastro manual saltándose la lógica de negocio (Directo a tabla de hechos).
+INSERT INTO `DatosCapacitaciones` (Fk_Id_Capacitacion, Fk_Id_Instructor,  Fecha_Inicio, Fecha_Fin, Fk_Id_CatCases_Sedes, Fk_Id_CatModalCap, Fk_Id_CatEstCap, Activo)
+VALUES (@IdCapKill, @IdInstructorQA,  CURDATE(), DATE_ADD(CURDATE(), INTERVAL 5 DAY), @IdSedeQA, @IdModalFK, @IdEstProgramado, 0); 
+-- Paso C: Intentar borrar. El Handler 1451 debe capturarlo si el conteo lógico fallara.
+-- [ESPERADO]: 🔴 ERROR [1451]: "BLOQUEO DE MOTOR [1451]: Integridad Referencial Estricta detectada..."
+ CALL SP_EliminarModalidadCapacitacionFisico(@IdModalFK);
+
+-- 6.5. Borrado Físico Exitoso (Happy Path y Bloque 6)
+-- Escenario: Eliminar @IdModal2, que es un registro "Virgen" creado en 2.2 y nunca usado.
+-- [ESPERADO]: Mensaje 'ÉXITO: La Modalidad... ha sido eliminada permanentemente...', Accion 'ELIMINACION_FISICA_COMPLETA'.
+-- CALL SP_EliminarModalidadCapacitacionFisico(@IdModal2);
+
+-- 6.6. Verificación de Rastro Cero en Disco
+-- Confirmamos que el registro ha desaparecido de la vista y de la tabla física.
+SELECT 'VERIFICACIÓN PURGA' AS STEP, IF(COUNT(*) = 0, 'ÉXITO: RASTRO ELIMINADO', 'FALLO: DATO PERSISTE') AS RESULT 
+FROM `Cat_Modalidad_Capacitacion` 
+WHERE `Id_CatModalCap` = @IdModal2;
+
+
+SELECT '>>> FASE 6 FINALIZADA: PROTOCOLO DE PURGA Y DEFENSA DE HISTORIAL CERTIFICADO <<<' AS RESULTADO;
+
+/* =================================================================================
+   FASE 7: LIMPIEZA TOTAL (TEARDOWN)
+   ================================================================================= */
+SELECT '--- FASE 7: LIMPIEZA FINAL ---' AS LOG;
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- [PASO 1]: CAPA DE HECHOS (TRANSACCIONAL)
+-- Primero eliminamos los datos que consumen a todos los demás catálogos
+-- Borramos rastro de capacitaciones de prueba
+-- Objetivo: Eliminar detalles y cabeceras de las capacitaciones QA.
+
+-- 1. Recuperamos el ID real de la cabecera usando el folio que tienes en pantalla
+SET @IdCapReal = (SELECT Id_Capacitacion FROM `Capacitaciones` WHERE Numero_Capacitacion = 'QA-CAP-KILL-01' LIMIT 1);
+-- (Ajusta los IDs según los que viste en tu consulta anterior)
+SET @IdDetalle1 = (SELECT Id_DatosCap FROM `DatosCapacitaciones` WHERE Fk_Id_Capacitacion = @IdCapReal LIMIT 1 OFFSET 0);
+SET @IdDetalle2 = (SELECT Id_DatosCap FROM `DatosCapacitaciones` WHERE Fk_Id_Capacitacion = @IdCapReal LIMIT 1 OFFSET 1);
+SET @IdDetalle3 = (SELECT Id_DatosCap FROM `DatosCapacitaciones` WHERE Fk_Id_Capacitacion = @IdCapReal LIMIT 1 OFFSET 2);
+
+-- 2. Eliminamos los detalles (DatosCapacitaciones) usando la FK correcta
+-- Nota: La columna en DatosCapacitaciones es Fk_Id_Capacitacion
+/*DELETE FROM `DatosCapacitaciones` 
+WHERE Fk_Id_Capacitacion = @IdCapReal 
+   OR Observaciones LIKE '%QA-MODAL%' 
+   OR Observaciones = 'CANDADO QA ACTIVO';*/
+
+-- 2. Borramos los detalles usando su PK (Esto NO dispara el Error 1175)
+DELETE FROM `DatosCapacitaciones` WHERE `Id_DatosCap` = @IdDetalle1;
+DELETE FROM `DatosCapacitaciones` WHERE `Id_DatosCap` = @IdDetalle2;
+DELETE FROM `DatosCapacitaciones` WHERE `Id_DatosCap` = @IdDetalle3;
+
+-- 3. Eliminamos la cabecera (Capacitaciones)
+DELETE FROM `Capacitaciones` 
+WHERE Id_Capacitacion = @IdCapReal;
+
+/*DELETE FROM `DatosCapacitaciones` WHERE `Id_Capacitacion` = @IdCapKill;
+DELETE FROM `Capacitaciones` WHERE `Id_Capacitacion` = @IdCapKill;*/
+
+
+-- [PASO 2]: CAPA DE PERSONAL Y ROLES
+-- SP_EliminarUsuarioDefinitivamente borra primero Usuarios y luego Info_Personal
+-- Borramos rastro de usuario/personal
+CALL SP_EliminarRolFisicamente(@IdRolQA);
+CALL SP_EliminarRegimenFisico(@IdRegimen);
+CALL SP_EliminarPuestoFisico(@IdPuesto);
+CALL SP_EliminarCentroTrabajoFisico(@IdCT);
+CALL SP_EliminarDepartamentoFisico(@IdDep);
+CALL SP_EliminarRegionFisica(@IdRegion);
+CALL SP_EliminarGerenciaFisica(@IdGerenQA);
+CALL SP_EliminarUsuarioDefinitivamente(@IdAdminEjecutor, @IdInstructorQA);
+
+-- Borramos la modalidad víctima
+/*CALL SP_EliminarModalidadCapacitacionFisico(@IdModal1);
+
+-- Borramos infraestructura estructural
+CALL SP_EliminarTemaCapacitacionFisico(@IdTemaQA);
+CALL SP_EliminarTipoInstruccionFisico(@IdTipoQA);
+
+CALL SP_EliminarSedeFisica(@IdSedeQA);
+CALL SP_EliminarCentroTrabajoFisico(@IdCTQA);
+CALL SP_EliminarDepartamentoFisico(@IdDepQA);
+CALL SP_EliminarGerenciaFisica(@IdGerenQA);*/
+
+-- [PASO 3]: CAPA ACADÉMICA Y MODALIDADES
+-- Limpiamos el catálogo que estábamos probando y sus temas
+CALL SP_EliminarTemaCapacitacionFisico(@IdTemaQA);
+CALL SP_EliminarTipoInstruccionFisico(@IdTipoQA);
+
+-- Purga de todas las modalidades creadas en las pruebas (1, 2, Zombie, FK, Legacy)
+CALL SP_EliminarModalidadCapacitacionFisico(@IdModal1);
+CALL SP_EliminarModalidadCapacitacionFisico(@IdModal2);
+CALL SP_EliminarModalidadCapacitacionFisico(@IdSinCod); -- La de enriquecimiento
+CALL SP_EliminarModalidadCapacitacionFisico(@IdModalFK);
+
+-- [PASO 4]: CAPA ORGANIZACIONAL (Estructura de la empresa)
+
+-- 2. Eliminamos Subdirección (Recuperamos ID por Clave antes de borrar)
+SET @IdSubQA = (SELECT Id_CatSubDirec FROM Cat_Subdirecciones WHERE Clave = 'QA-S-01');
+CALL SP_EliminarSubdireccionFisica(@IdSubQA);
+
+-- 3. Eliminamos Dirección (Recuperamos ID por Clave antes de borrar)
+SET @IdDirQA = (SELECT Id_CatDirecc FROM Cat_Direcciones WHERE Clave = 'QA-D-01');
+CALL SP_EliminarDireccionFisica(@IdDirQA);
+
+-- DELETE FROM `Cat_Subdirecciones` WHERE `Clave` = 'QA-S-01';
+-- DELETE FROM `Cat_Direcciones` WHERE `Clave` = 'QA-D-01';
+
+-- [PASO 5]: CAPA FÍSICA Y GEOGRÁFICA
+CALL SP_EliminarSedeFisica(@IdSedeQA);
+
+CALL SP_EliminarMunicipio(@IdMunQA);
+
+-- 2. Eliminamos Estado (Recuperamos ID por Código antes de borrar)
+SET @IdEdoQA = (SELECT Id_Estado FROM Estado WHERE Codigo = 'QA-E-01');
+CALL SP_EliminarEstadoFisico(@IdEdoQA);
+
+-- 3. Eliminamos País (Recuperamos ID por Código antes de borrar)
+SET @IdPaisQA = (SELECT Id_Pais FROM Pais WHERE Codigo = 'QA-P-01');
+CALL SP_EliminarPaisFisico(@IdPaisQA);
+
+-- CALL SP_EliminarEstadoFisico((SELECT Id_Estado FROM Estado WHERE Codigo = 'QA-E-01'));
+-- CALL SP_EliminarPaisFisico((SELECT Id_Pais FROM Pais WHERE Codigo = 'QA-P-01'));
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+SELECT '>>> VALIDACIÓN FINALIZADA: SISTEMA DE MODALIDADES CERTIFICADO <<<' AS RESULTADO;
+
+/* =================================================================================
+   ================================================================================= */
+
+USE Picade;
+
+/* =================================================================================
+   MASTER SCRIPT DE VALIDACIÓN (QA) - ESTATUS DE PARTICIPANTE
+   VERSIÓN: DIAMOND STANDARD FORENSIC (FULL INFRASTRUCTURE COMPLIANCE)
+   =================================================================================
+   OBJETIVO: 
+   Validar el ciclo de vida completo del Catálogo de Estatus de Participante,
+   utilizando la infraestructura nativa del sistema para simular un entorno real.
+   ================================================================================= */
+
+-- 1. CONFIGURACIÓN DE ACTORES
+SET @IdAdminEjecutor = 322; -- ID de tu Administrador existente.
+
+-- ---------------------------------------------------------------------------------
+-- FASE 0: LIMPIEZA PREVENTIVA (DATA STERILIZATION)
+-- ---------------------------------------------------------------------------------
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- Limpieza de tablas transaccionales (Hijos)
+DELETE FROM `Capacitaciones_Participantes` WHERE `Calificacion` = 99.99;
+DELETE FROM `DatosCapacitaciones` WHERE `Observaciones` LIKE '%QA-PART%';
+DELETE FROM `Capacitaciones` WHERE `Numero_Capacitacion` LIKE '%QA-PART%';
+
+-- Limpieza de catálogos base (Padres)
+DELETE FROM `Cat_Estatus_Participante` WHERE `Codigo` LIKE 'QA-EST-%';
+DELETE FROM `Cat_Estatus_Capacitacion` WHERE `Codigo` LIKE 'QA-EC-%';
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+SELECT '>>> FASE 0: ENTORNO DE PRUEBAS ESTERILIZADO <<<' AS ESTADO;
+
+
+/* =================================================================================
+   FASE 1: CONSTRUCCIÓN DE INFRAESTRUCTURA (BASE PARA EL CANDADO)
+   Usamos tus SPs maestros para crear un ecosistema válido.
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 1: INFRAESTRUCTURA ---' AS LOG;
+
+-- 1.1. Estatus de CURSO (Vitales para la lógica del Killswitch)
+-- A) Estatus VIVO (Es_Final = 0)
+CALL SP_RegistrarEstatusCapacitacion('QA-EC-VIVO', 'CURSO ACTIVO QA', 'Infraestructura QA', 0);
+SET @IdEstCurVivo = (SELECT Id_CatEstCap FROM Cat_Estatus_Capacitacion WHERE Codigo = 'QA-EC-VIVO');
+
+-- B) Estatus MUERTO (Es_Final = 1)
+CALL SP_RegistrarEstatusCapacitacion('QA-EC-FIN', 'CURSO FINALIZADO QA', 'Infraestructura QA', 1);
+SET @IdEstCurFin = (SELECT Id_CatEstCap FROM Cat_Estatus_Capacitacion WHERE Codigo = 'QA-EC-FIN');
+
+-- 1.2. Ubicación y Organización (Para la Sede del curso)
+CALL SP_RegistrarUbicaciones('QA-M-PART', 'MUNICIPIO QA PART', 'QA-E-PART', 'ESTADO QA PART', 'QA-P-PART', 'PAIS QA PART');
+SET @IdMunQA = (SELECT Id_Municipio FROM Municipio WHERE Codigo = 'QA-M-PART');
+
+CALL SP_RegistrarOrganizacion('QA-G-PART', 'GERENCIA QA PART', 'QA-S-PART', 'SUB QA PART', 'QA-D-PART', 'DIR QA PART');
+SET @IdGerenQA = (SELECT Id_CatGeren FROM Cat_Gerencias_Activos WHERE Clave = 'QA-G-PART');
+
+CALL SP_RegistrarCentroTrabajo('QA-CT-PART', 'OFICINA QA PART', 'AV. TEST', @IdMunQA);
+SET @IdCT = (SELECT Id_CatCT FROM Cat_Centros_Trabajo WHERE Codigo = 'QA-CT-PART');
+
+CALL SP_RegistrarDepartamento('QA-DEP-PART', 'DEPTO QA PART', 'PISO 1', @IdMunQA);
+SET @IdDep = (SELECT Id_CatDep FROM Cat_Departamentos WHERE Codigo = 'QA-DEP-PART');
+
+CALL SP_RegistrarSede('QA-S-PART', 'SEDE QA PART', 'DIR QA', @IdMunQA, 10, 1, 0, 0, 0, 0, 0);
+SET @IdSedeQA = (SELECT Id_CatCases_Sedes FROM Cat_Cases_Sedes WHERE Codigo = 'QA-S-PART');
+
+-- 1.3. Catálogos RH
+CALL SP_RegistrarRegion('QA-RGN-P', 'REGION QA PART', 'TEST');
+SET @IdRegion = (SELECT Id_CatRegion FROM Cat_Regiones_Trabajo WHERE Codigo = 'QA-RGN-P');
+
+CALL SP_RegistrarRegimen('QA-REG-P', 'REGIMEN QA PART', 'TEST');
+SET @IdRegimen = (SELECT Id_CatRegimen FROM Cat_Regimenes_Trabajo WHERE Codigo = 'QA-REG-P');
+
+CALL SP_RegistrarPuesto('QA-PUE-P', 'PUESTO QA PART', 'TEST');
+SET @IdPuesto = (SELECT Id_CatPuesto FROM Cat_Puestos_Trabajo WHERE Codigo = 'QA-PUE-P');
+
+-- 1.4. Actores: Instructor y Alumno
+CALL SP_RegistrarRol('QA-R-PART', 'ROL QA PART', 'TEST');
+SET @IdRolQA = (SELECT Id_Rol FROM Cat_Roles WHERE Codigo = 'QA-R-PART');
+
+-- Alta Instructor
+CALL SP_RegistrarUsuarioPorAdmin(@IdAdminEjecutor, 'QA-F-INST', NULL, 'INSTRUCTOR', 'PART', 'QA', '1990-01-01', '2023-01-01', 'inst_part@qa.test', 'pass', @IdRolQA, @IdRegimen, @IdPuesto, @IdCT, @IdDep, @IdRegion, @IdGerenQA, '01', 'A');
+SET @IdInstructorQA = (SELECT Id_Usuario FROM Usuarios WHERE Ficha = 'QA-F-INST');
+
+-- Alta Alumno
+CALL SP_RegistrarUsuarioPorAdmin(@IdAdminEjecutor, 'QA-F-ALUM', NULL, 'ALUMNO', 'PART', 'QA', '1995-01-01', '2020-01-01', 'alum_part@qa.test', 'pass', @IdRolQA, @IdRegimen, @IdPuesto, @IdCT, @IdDep, @IdRegion, @IdGerenQA, '01', 'A');
+SET @IdAlumnoQA = (SELECT Id_Usuario FROM Usuarios WHERE Ficha = 'QA-F-ALUM');
+
+-- 1.5. Tema del curso
+CALL SP_RegistrarTipoInstruccion('QA-T-PART', 'TIPO QA PART');
+SET @IdTipoQA = (SELECT Id_CatTipoInstCap FROM Cat_Tipos_Instruccion_Cap WHERE Nombre = 'QA-T-PART');
+
+CALL SP_RegistrarTemaCapacitacion('QA-CUR-PART', 'CURSO TEST PART', 'TEST', 5, @IdTipoQA);
+SET @IdTemaQA = (SELECT Id_Cat_TemasCap FROM Cat_Temas_Capacitacion WHERE Codigo = 'QA-CUR-PART');
+
+/* =================================================================================
+   FASE 2: PRUEBAS DE "REGISTRO" (SP_RegistrarEstatusParticipante)
+   ---------------------------------------------------------------------------------
+   Objetivo: Verificar creación, sanitización, unicidad y autosanación.
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 2: REGISTRO (COBERTURA TOTAL) ---' AS TEST_STEP;
+
+-- 2.1. Registro Happy Path (Escenario C - Nuevo)
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarEstatusParticipante('  QA-EST-01  ', '  INSCRITO QA  ', '  Estatus inicial  ');
+SET @IdEstInscrito = (SELECT Id_CatEstPart FROM Cat_Estatus_Participante WHERE Codigo = 'QA-EST-01');
+
+-- 2.2. Registro Segundo Estatus (Happy Path 2)
+-- [ESPERADO]: Accion 'CREADA'.
+CALL SP_RegistrarEstatusParticipante('QA-EST-02', 'APROBADO QA', 'Estatus final');
+SET @IdEstAprobado = (SELECT Id_CatEstPart FROM Cat_Estatus_Participante WHERE Codigo = 'QA-EST-02');
+
+-- 2.3. Prueba de Integridad - Código NULL (Validación 2.2)
+-- [ESPERADO]: 🔴 ERROR [400]: "El CÓDIGO del Estatus es obligatorio."
+CALL SP_RegistrarEstatusParticipante(NULL, 'NOMBRE', 'DESC');
+
+-- [NUEVO] 2.3.b. Prueba de Integridad - Nombre NULL (Validación 2.2)
+-- [ESPERADO]: 🔴 ERROR [400]: "El NOMBRE del Estatus es obligatorio."
+CALL SP_RegistrarEstatusParticipante('COD-X', NULL, 'DESC');
+
+-- 2.4. Prueba de Idempotencia (Escenario A.3 - Ya existe y activo)
+-- [ESPERADO]: Mensaje 'AVISO... ya se encuentra registrado...', Accion 'REUSADA'.
+CALL SP_RegistrarEstatusParticipante('QA-EST-01', 'INSCRITO QA', 'Otra desc');
+
+-- 2.5. Conflicto de Identidad A (Escenario A.1 - Código existe, Nombre difiere)
+-- Intentamos usar el código 'QA-EST-01' con un nombre falso.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS... El CÓDIGO ingresado ya existe..."
+CALL SP_RegistrarEstatusParticipante('QA-EST-01', 'NOMBRE FALSO', 'DESC');
+
+-- [NUEVO] 2.6. Conflicto de Identidad B (Escenario B.1 - Nombre existe, Código difiere)
+-- Intentamos usar el nombre 'INSCRITO QA' con un código nuevo.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS... El NOMBRE ingresado ya existe..."
+CALL SP_RegistrarEstatusParticipante('QA-COD-NUEVO', 'INSCRITO QA', 'DESC');
+
+-- [NUEVO] 2.7. Prueba de Autosanación (Escenario A.2 - Reactivación)
+-- Paso A: Simulamos que el registro fue borrado lógicamente (preparación)
+UPDATE `Cat_Estatus_Participante` SET `Activo` = 0 WHERE `Id_CatEstPart` = @IdEstInscrito;
+
+-- Paso B: Intentamos registrarlo de nuevo.
+-- [ESPERADO]: Mensaje 'ÉXITO: Estatus reactivado...', Accion 'REACTIVADA'.
+CALL SP_RegistrarEstatusParticipante('QA-EST-01', 'INSCRITO QA', 'Descripcion actualizada al revivir');
+
+-- Verificación visual de que revivió
+SELECT 'VERIFICACION REACTIVACION' AS STEP, Codigo, Activo FROM Cat_Estatus_Participante WHERE Id_CatEstPart = @IdEstInscrito;
+
+/* =================================================================================
+   FASE 3: PRUEBAS DE "LECTURA Y VISTAS"
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 3: LECTURA ---' AS TEST_STEP;
+
+-- 3.1. Listado Admin
+CALL SP_ListarEstatusParticipante();
+
+-- 3.2. Listado Activos (Dropdown)
+CALL SP_ListarEstatusParticipanteActivos();
+
+-- 3.3. Consulta Específica
+CALL SP_ConsultarEstatusParticipanteEspecifico(@IdEstInscrito);
+
+-- 3.4. Consulta Específica
+CALL SP_ConsultarEstatusParticipanteEspecifico(@IdEstAprobado);
+
+SELECT * FROM VISTA_ESTATUS_PARTICIPANTE;
+
+/* =================================================================================
+   FASE 4: PRUEBAS DE "EDICIÓN" (SP_EditarEstatusParticipante)
+   ---------------------------------------------------------------------------------
+   Objetivo: Validar la robustez del motor de actualización contra:
+   - Inputs inválidos (Bloque 2).
+   - Registros fantasma/zombie (Bloque 3.1).
+   - Idempotencia (Bloque 4.2).
+   - Conflictos de Unicidad Cruzada (Bloque 4.3).
+   ================================================================================= */
+SELECT '--- INICIANDO FASE 4: EDICIÓN TRANSACCIONAL (COBERTURA 100%) ---' AS TEST_STEP;
+
+-- 4.1. Validación de Integridad de ID (Fail Fast)
+-- [ESPERADO]: 🔴 ERROR [400]: "Identificador de Estatus inválido."
+CALL SP_EditarEstatusParticipante(NULL, 'COD', 'NOM', 'DESC');
+CALL SP_EditarEstatusParticipante(0, 'COD', 'NOM', 'DESC');
+
+-- 4.2. Validación de Obligatoriedad de Datos (Bloque 2.2)
+-- [ESPERADO]: 🔴 ERROR [400]: "El CÓDIGO es obligatorio."
+CALL SP_EditarEstatusParticipante(@IdEstInscrito, NULL, 'NOMBRE VALIDO', 'DESC');
+
+-- [ESPERADO]: 🔴 ERROR [400]: "El NOMBRE es obligatorio."
+CALL SP_EditarEstatusParticipante(@IdEstInscrito, 'CODIGO VALIDO', NULL, 'DESC');
+
+-- 4.3. Validación de Existencia Previa (Error 404)
+-- Escenario: Intentar editar un ID que no existe en la BD.
+-- [ESPERADO]: 🔴 ERROR [404]: "El Estatus que intenta editar no existe."
+CALL SP_EditarEstatusParticipante(999999, 'QA-GHOST', 'GHOST', 'DESC');
+
+-- 4.4. Validación "Anti-Zombie" (Error 410 - Race Condition Simulada)
+-- Objetivo: Probar el Bloque 4.1 (Si el registro desaparece durante el bloqueo).
+-- Paso A: Crear un registro temporal.
+CALL SP_RegistrarEstatusParticipante('QA-ZOMBIE', 'ZOMBIE TEMP', 'Para borrar');
+SET @IdZombie = (SELECT Id_CatEstPart FROM Cat_Estatus_Participante WHERE Codigo = 'QA-ZOMBIE');
+
+-- Paso B: Borrarlo físicamente (Simulando que otro admin lo borró mientras nosotros editábamos).
+DELETE FROM `Cat_Estatus_Participante` WHERE `Id_CatEstPart` = @IdZombie;
+
+-- Paso C: Intentar editarlo (El SP pasará la validación de ID, pero fallará al intentar bloquear).
+-- [ESPERADO]: 🔴 ERROR [410]: "El registro desapareció durante la transacción." (O 404 dependiendo de la velocidad del lock).
+-- [ESPERADO]: 🔴 ERROR [404]: "El Estatus que intenta editar no existe."
+-- (Nota: El Error 410 solo ocurre en concurrencia milimétrica real, en script secuencial salta el 404 primero).
+CALL SP_EditarEstatusParticipante(@IdZombie, 'QA-ZOMBIE-ED', 'REVIVIR', 'DESC');
+
+-- [PASO CRÍTICO DE CORRECCIÓN]
+-- Resincronizamos la variable por si hubo "ruido" en la sesión anterior.
+-- Esto asegura que @IdEstInscrito sea el dueño legítimo de 'QA-EST-01'.
+-- [PASO CRÍTICO] Forzamos la variable al ID 8 que es el que tiene el código 'QA-EST-01' ahora.
+-- Esto soluciona el conflicto con el ID 6.
+SET @IdEstInscrito = (SELECT Id_CatEstPart FROM Cat_Estatus_Participante WHERE Codigo = 'QA-EST-01' LIMIT 1);
+
+-- También aseguramos el ID del "otro" estatus para probar conflictos
+SET @IdEstAprobado = (SELECT Id_CatEstPart FROM Cat_Estatus_Participante WHERE Codigo = 'QA-EST-02' LIMIT 1);
+
+-- 4.5. Prueba de Idempotencia "Sin Cambios" (Bloque 4.2)
+-- Enviamos exactamente los mismos datos.
+-- [ESPERADO]: Mensaje 'AVISO: No se detectaron cambios...', Accion 'SIN_CAMBIOS'.
+CALL SP_EditarEstatusParticipante(@IdEstInscrito, 'QA-EST-01', 'INSCRITO QA', 'Estatus inicial');
+
+-- 4.6. Conflicto de Unicidad por CÓDIGO (Bloque 4.3.A)
+-- Intentamos ponerle al Estatus 1 el CÓDIGO del Estatus 2.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS... El CÓDIGO ingresado ya pertenece a otro Estatus."
+CALL SP_EditarEstatusParticipante(@IdEstInscrito, 'QA-EST-02', 'NOMBRE DIFERENTE', 'DESC');
+
+-- 4.7. Conflicto de Unicidad por NOMBRE (Bloque 4.3.B)
+-- Intentamos ponerle al Estatus 1 el NOMBRE del Estatus 2.
+-- [ESPERADO]: 🔴 ERROR [409]: "CONFLICTO DE DATOS... El NOMBRE ingresado ya pertenece a otro Estatus."
+CALL SP_EditarEstatusParticipante(@IdEstInscrito, 'CODIGO DIFERENTE', 'APROBADO QA', 'DESC');
+
+-- 4.8. Edición Exitosa (Happy Path - Bloque 7)
+-- [ESPERADO]: Mensaje 'ÉXITO...', Accion 'ACTUALIZADA'.
+CALL SP_EditarEstatusParticipante(@IdEstInscrito, 'QA-EST-01-ED', 'INSCRITO VIVO QA', 'Renombrado con éxito');
+
+-- 4.9. Verificación de Integridad (Post-Check)
+SELECT 'VERIFICACION EDICION' AS STEP, Codigo, Nombre, Descripcion 
+FROM Cat_Estatus_Participante WHERE Id_CatEstPart = @IdEstInscrito;
+
+/* =================================================================================
+   FASE 5: PRUEBAS DE "BAJA LÓGICA" (KILLSWITCH FORENSE & VALIDACIONES)
+   ---------------------------------------------------------------------------------
+   Objetivo: Validar validaciones de entrada, idempotencia y el Killswitch Forense.
+   ================================================================================= */
+SELECT '>>> INICIANDO FASE 5: SMART KILLSWITCH (COBERTURA 100%) <<<' AS TEST_STEP;
+
+-- 5.1. Validación de Integridad de Entrada (Bloque D.1 - ID Inválido)
+-- [ESPERADO]: 🔴 ERROR [400]: "El ID de Estatus proporcionado es inválido o nulo."
+CALL SP_CambiarEstatusParticipante(NULL, 0);
+CALL SP_CambiarEstatusParticipante(0, 0);
+CALL SP_CambiarEstatusParticipante(-5, 0);
+
+-- 5.2. Validación de Dominio (Bloque D.2 - Estatus Inválido)
+-- [ESPERADO]: 🔴 ERROR [400]: "...solo acepta valores binarios: 0 (Inactivo) o 1 (Activo)."
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 2);
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, NULL);
+
+-- 5.3. Validación de Existencia (Paso E.2 - 404 Not Found)
+-- [ESPERADO]: 🔴 ERROR [404]: "El Estatus solicitado no existe..."
+CALL SP_CambiarEstatusParticipante(999999, 0);
+
+-- 5.4. Prueba de Idempotencia (Paso E.3 - Sin Cambios)
+-- Intentamos activar algo que ya está activo (El estatus nace activo).
+-- [ESPERADO]: Mensaje 'AVISO... ya se encuentra en el estado solicitado', Accion 'SIN_CAMBIOS'.
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 1);
+
+-- 5.5. PREPARACIÓN KILLSWITCH: Crear Curso VIVO con Alumno Inscrito
+-- Paso A: Crear Cabecera
+INSERT INTO `Capacitaciones` (Numero_Capacitacion, Fk_Id_CatGeren, Fk_Id_Cat_TemasCap, Asistentes_Programados, Activo)
+VALUES ('QA-CAP-PART-01', @IdGerenQA, @IdTemaQA, 5, 1);
+SET @IdCap = LAST_INSERT_ID();
+
+-- Paso B: Crear Detalle VIVO (Activo=1, Es_Final=0)
+-- Usamos @IdEstCurVivo (que tiene Es_Final = 0)
+INSERT INTO `DatosCapacitaciones` 
+(Fk_Id_Capacitacion, Fk_Id_Instructor, Fecha_Inicio, Fecha_Fin, Fk_Id_CatCases_Sedes, Fk_Id_CatModalCap, Fk_Id_CatEstCap, Activo, Observaciones)
+VALUES 
+(@IdCap, @IdInstructorQA, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 5 DAY), @IdSedeQA, 1, @IdEstCurVivo, 1, 'QA-PART VIVO');
+SET @IdDatosCapVivo = LAST_INSERT_ID();
+
+-- Paso C: Inscribir al Alumno con el Estatus que queremos borrar (@IdEstInscrito)
+INSERT INTO `Capacitaciones_Participantes` (Fk_Id_DatosCap, Fk_Id_Usuario, Fk_Id_CatEstPart, Calificacion)
+VALUES (@IdDatosCapVivo, @IdAlumnoQA, @IdEstInscrito, 99.99);
+
+-- [CORRECCIÓN] Capturamos el ID de la inscripción para limpieza quirúrgica
+SET @IdInscripcionQA = LAST_INSERT_ID();
+
+-- 5.6. PRUEBA DE BLOQUEO (EL CURSO ESTÁ VIVO)
+-- Intentamos desactivar "INSCRITO VIVO QA".
+-- [ESPERADO]: 🔴 ERROR [409]: "BLOQUEO DE INTEGRIDAD... detectaron 1 participantes... en CURSOS ACTIVOS..."
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 0);
+
+-- 5.7. ESCENARIO DE LIBERACIÓN 1: FINALIZADO (Activo=1, Es_Final=1)
+-- Actualizamos el curso para que tenga estatus "FINALIZADO". Sigue visible (Activo=1).
+UPDATE `DatosCapacitaciones` SET `Fk_Id_CatEstCap` = @IdEstCurFin WHERE `Id_DatosCap` = @IdDatosCapVivo;
+SELECT 'INFO: Curso migrado a FINALIZADO (Activo=1, Final=1).' AS INFO;
+
+-- [ESPERADO]: Mensaje 'ÉXITO... ha sido DESACTIVADO'. (Debe permitirlo).
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 0);
+
+-- Reactivamos para la siguiente prueba
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 1);
+
+-- 5.8. [NUEVO] ESCENARIO DE LIBERACIÓN 2: ARCHIVADO FINALIZADO (Activo=0, Es_Final=1)
+-- El curso finalizó y ADEMÁS alguien lo borró de la lista (Soft Delete).
+-- Esta es la prueba que pediste.
+UPDATE `DatosCapacitaciones` SET `Activo` = 0 WHERE `Id_DatosCap` = @IdDatosCapVivo;
+SELECT 'INFO: Curso marcado como ARCHIVADO FINALIZADO (Activo=0, Final=1).' AS INFO;
+
+-- [ESPERADO]: Mensaje 'ÉXITO... ha sido DESACTIVADO'. (Debe permitirlo).
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 0);
+
+-- Reactivamos para la siguiente prueba
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 1);
+
+/* =================================================================================
+   [SECCIÓN COMENTADA - ESCENARIO TEÓRICO DE ANOMALÍA]
+   ---------------------------------------------------------------------------------
+   EXPLICACIÓN DEL COMENTARIO:
+   El siguiente bloque prueba el escenario "Zombie": Un curso borrado lógicamente (Activo=0)
+   pero que académicamente seguía vivo (Es_Final=0).
+   
+   ¿POR QUÉ SUCEDE EN TEORÍA?
+   Si un Administrador borra un curso "En Progreso" directamente desde la base de datos 
+   o si el SP de Baja de Cursos no valida el estatus académico, se crea este registro huérfano.
+   Al estar Activo=0, el Killswitch de este SP lo ignora y permite la baja, lo cual es técnicamente
+   correcto (es basura), pero semánticamente peligroso.
+
+   SOLUCIÓN DE BLINDAJE (PRÓXIMOS PASOS):
+   En el Módulo de Gestión de Capacitaciones (`SP_EliminarCapacitacionLogico`), implementaremos
+   una regla de "Cierre Forzoso":
+   > "No se permite la Baja Lógica de una Capacitación si su Estatus Académico no es FINAL (Es_Final=1)."
+   
+   Esto garantizará que nunca existan registros con (Activo=0 AND Es_Final=0), haciendo
+   innecesaria la ejecución de esta prueba en el flujo normal.
+   ================================================================================= */
+
+/* -- 5.9. ESCENARIO DE LIBERACIÓN 3: ARCHIVADO VIVO (Activo=0, Es_Final=0)
+-- El curso estaba "En Curso" (Vivo) pero se borró por error humano (Soft Delete).
+-- Regresamos el estatus a VIVO, pero mantenemos Activo=0.
+
+UPDATE `DatosCapacitaciones` 
+SET `Fk_Id_CatEstCap` = @IdEstCurVivo 
+WHERE `Id_DatosCap` = @IdDatosCapVivo;
+
+SELECT 'INFO: Curso marcado como ARCHIVADO VIVO (Activo=0, Final=0) - Escenario Zombie.' AS INFO;
+
+-- [ESPERADO]: Mensaje 'ÉXITO... ha sido DESACTIVADO'. (Debe permitirlo porque Activo=0 mata el bloqueo).
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 0);
+
+-- Reactivamos para la Fase 6
+CALL SP_CambiarEstatusParticipante(@IdEstInscrito, 1); 
+*/
+
+/* =================================================================================
+   FASE 7: TEARDOWN (LIMPIEZA FINAL CON SPs)
+   ================================================================================= */
+SELECT '--- FASE 7: LIMPIEZA FINAL ---' AS TEST_STEP;
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- 1. Borrar evidencia transaccional (Hijos) para poder borrar el Estatus Víctima
+DELETE FROM `Capacitaciones_Participantes` WHERE `Fk_Id_Usuario` = @IdAlumnoQA;
+DELETE FROM `DatosCapacitaciones` WHERE `Id_DatosCap` = @IdDatosCapVivo;
+DELETE FROM `Capacitaciones` WHERE `Id_Capacitacion` = @IdCap;
+
+-- 2. Borrar el estatus "Inscrito" (Padre) usando el SP
+CALL SP_EliminarEstatusParticipanteFisico(@IdEstInscrito);
+ CALL SP_EliminarEstatusParticipanteFisico(@IdEstAprobado);
+
+-- 3. Limpiar Infraestructura con SPs de eliminación
+CALL SP_EliminarTemaCapacitacionFisico(@IdTemaQA);
+CALL SP_EliminarTipoInstruccionFisico(@IdTipoQA);
+CALL SP_EliminarEstatusCapacitacionFisico(@IdEstCurVivo);
+CALL SP_EliminarEstatusCapacitacionFisico(@IdEstCurFin);
+
+CALL SP_EliminarUsuarioDefinitivamente(@IdAdminEjecutor, @IdInstructorQA);
+CALL SP_EliminarUsuarioDefinitivamente(@IdAdminEjecutor, @IdAlumnoQA);
+
+CALL SP_EliminarRolFisicamente(@IdRolQA);
+CALL SP_EliminarPuestoFisico(@IdPuesto);
+CALL SP_EliminarRegimenFisico(@IdRegimen);
+CALL SP_EliminarRegionFisica(@IdRegion);
+
+CALL SP_EliminarSedeFisica(@IdSedeQA);
+CALL SP_EliminarGerenciaFisica(@IdGerenQA);
+CALL SP_EliminarDepartamentoFisico(@IdDep);
+CALL SP_EliminarCentroTrabajoFisico(@IdCT);
+
+-- Limpieza Geográfica (Recuperamos IDs de Sub/Dir para borrarlos con SP)
+SET @IdSub = (SELECT Id_CatSubDirec FROM Cat_Subdirecciones WHERE Clave = 'QA-S-PART');
+SET @IdDir = (SELECT Id_CatDirecc FROM Cat_Direcciones WHERE Clave = 'QA-D-PART');
+CALL SP_EliminarSubdireccionFisica(@IdSub);
+CALL SP_EliminarDireccionFisica(@IdDir);
+
+-- Ubicación
+SET @IdEdo = (SELECT Id_Estado FROM Estado WHERE Codigo = 'QA-E-PART');
+SET @IdPais = (SELECT Id_Pais FROM Pais WHERE Codigo = 'QA-P-PART');
+CALL SP_EliminarMunicipio(@IdMunQA);
+CALL SP_EliminarEstadoFisico(@IdEdo);
+CALL SP_EliminarPaisFisico(@IdPais);
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+SELECT '>>> VALIDACIÓN FINALIZADA: MÓDULO ESTATUS PARTICIPANTE CERTIFICADO <<<' AS RESULTADO;

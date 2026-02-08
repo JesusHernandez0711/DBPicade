@@ -1,0 +1,2539 @@
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto jerárquico necesario para que el formulario de edición se autocomplete.
+   ============================================================================================ */
+
+/* ============================================================================================
+	PROCEDIMIENTO: SP_ConsultarPaisEspecifico
+   ============================================================================================
+   ¿CUÁNDO SE USA?
+   --------------
+   Cuando el usuario abre la pantalla "Editar País" o un modal de detalle.
+
+   ¿QUÉ RESUELVE?
+   --------------
+   Devuelve el registro del País por Id, incluyendo su estatus (Activo/Inactivo),
+   para que el frontend pueda:
+   - Precargar inputs (Código / Nombre)
+   - Mostrar el estatus actual
+   - Decidir si habilita acciones (reactivar / desactivar)
+
+   NOTA DE DISEÑO
+   --------------
+   - NO filtramos por Activo=1 aquí, porque para edición/admin necesitas poder
+     consultar también países inactivos.
+   - Validamos Id y existencia para devolver errores controlados (no “null” silencioso).
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_ConsultarPaisEspecifico$$
+CREATE PROCEDURE SP_ConsultarPaisEspecifico(
+    IN _Id_Pais INT
+)
+BEGIN
+    /* ------------------------------------------------------------
+       VALIDACIÓN 1: Id válido
+       - Evita llamadas con NULL, 0, negativos, etc.
+    ------------------------------------------------------------ */
+    IF _Id_Pais IS NULL OR _Id_Pais <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: Id_Pais inválido.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       VALIDACIÓN 2: El país existe
+       - Si no existe, no tiene sentido cargar el formulario
+    ------------------------------------------------------------ */
+    IF NOT EXISTS (SELECT 1 FROM Pais WHERE Id_Pais = _Id_Pais) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: El País no existe.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       CONSULTA PRINCIPAL
+       - Trae el país exacto
+       - LIMIT 1 por seguridad
+    ------------------------------------------------------------ */
+    SELECT
+        Id_Pais,
+        Codigo,
+        Nombre,
+        Activo,
+        created_at,
+        updated_at
+    FROM Pais
+    WHERE Id_Pais = _Id_Pais
+    LIMIT 1;
+END$$
+
+DELIMITER ;
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarEstadoEspecifico
+   ============================================================================================
+   ¿CUÁNDO SE USA?
+   --------------
+   Cuando el usuario abre la pantalla "Editar Estado".
+
+   ¿QUÉ RESUELVE?
+   --------------
+   Para editar un Estado, el frontend normalmente necesita:
+   - Datos del Estado (Código, Nombre, Activo)
+   - El País al que pertenece (para preseleccionar el -- DROPdown de País)
+   - (Opcional UI) Mostrar datos del País (Código/Nombre) como referencia
+
+   NOTA DE DISEÑO
+   --------------
+   - NO filtramos por Activo=1 porque un admin puede necesitar editar/ver un estado inactivo.
+   - Validamos Id y existencia para que el backend falle con un mensaje claro.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_ConsultarEstadoEspecifico$$
+CREATE PROCEDURE SP_ConsultarEstadoEspecifico(
+    IN _Id_Estado INT
+)
+BEGIN
+    /* ------------------------------------------------------------
+       VALIDACIÓN 1: Id válido
+    ------------------------------------------------------------ */
+    IF _Id_Estado IS NULL OR _Id_Estado <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: Id_Estado inválido.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       VALIDACIÓN 2: El estado existe
+    ------------------------------------------------------------ */
+    IF NOT EXISTS (SELECT 1 FROM Estado WHERE Id_Estado = _Id_Estado) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: El Estado no existe.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       CONSULTA PRINCIPAL
+       - Trae Estado + País padre
+       - Esto permite precargar el -- DROPdown de País en el frontend
+       - LIMIT 1 por seguridad
+    ------------------------------------------------------------ */
+    SELECT
+        Est.Id_Estado,
+        Est.Codigo      AS Codigo_Estado,
+        Est.Nombre      AS Nombre_Estado,
+        
+        Est.Fk_Id_Pais  AS Id_Pais,
+        Pais.Codigo     AS Codigo_Pais,
+        Pais.Nombre     AS Nombre_Pais,
+		
+        Est.Activo      AS Activo_Estado,
+        Est.created_at  AS created_at_estado,
+        Est.updated_at  AS updated_at_estado
+    FROM Estado Est
+    JOIN Pais  Pais ON Pais.Id_Pais = Est.Fk_Id_Pais
+    WHERE Est.Id_Estado = _Id_Estado
+    LIMIT 1;
+END$$
+
+DELIMITER ;
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarMunicipioEspecifico
+   ============================================================================================
+   ¿CUÁNDO SE USA?
+   --------------
+   Cuando el usuario abre la pantalla "Editar Municipio".
+
+   ¿QUÉ RESUELVE?
+   --------------
+   Para que tu formulario sea rápido y “inteligente”, necesitas saber:
+   - El Municipio actual (Código, Nombre, Activo)
+   - El Estado actual al que pertenece
+   - El País actual al que pertenece ese Estado
+
+   Con esta info tu frontend puede:
+   - Precargar inputs: Codigo_Municipio y Nombre_Municipio
+   - Preseleccionar -- DROPdown País con Id_Pais actual
+   - Preseleccionar -- DROPdown Estado con Id_Estado actual
+
+   ¿POR QUÉ NO USAR UNA VISTA AQUÍ?
+   -------------------------------
+   Podrías usar una vista, pero un SP te da:
+   - Validaciones más claras (si no existe el municipio, error controlado)
+   - Un único contrato para el frontend
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_ConsultarMunicipioEspecifico$$
+CREATE PROCEDURE SP_ConsultarMunicipioEspecifico(
+    IN _Id_Municipio INT
+)
+BEGIN
+    /* ------------------------------------------------------------
+       VALIDACIÓN 1: Id válido
+       - Evita llamadas con NULL, 0, negativos, etc.
+    ------------------------------------------------------------ */
+    IF _Id_Municipio IS NULL OR _Id_Municipio <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'ERROR: Id_Municipio inválido.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       VALIDACIÓN 2: El municipio existe
+       - Si no existe, no tiene sentido cargar el formulario
+    ------------------------------------------------------------ */
+    IF NOT EXISTS (SELECT 1 FROM Municipio WHERE Id_Municipio = _Id_Municipio) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'ERROR: El Municipio no existe.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       CONSULTA PRINCIPAL
+       - Trae Municipio + Estado + País actual
+       - LIMIT 1 por seguridad
+    ------------------------------------------------------------ */
+    SELECT
+        Mun.Id_Municipio,
+        Mun.Codigo  AS Codigo_Municipio,
+        Mun.Nombre  AS Nombre_Municipio,
+        
+        Mun.Fk_Id_Estado AS Id_Estado,
+        Est.Codigo  AS Codigo_Estado,
+        Est.Nombre  AS Nombre_Estado,
+        
+        Est.Fk_Id_Pais AS Id_Pais,
+        Pais.Codigo AS Codigo_Pais,
+        Pais.Nombre AS Nombre_Pais,
+        
+        Mun.Activo  AS Activo_Municipio,
+        Mun.created_at AS Created_at_Municipio,
+        Mun.updated_at AS Updated_at_Municipio
+
+    FROM Municipio Mun
+    JOIN Estado Est  ON Est.Id_Estado = Mun.Fk_Id_Estado
+    JOIN Pais Pais   ON Pais.Id_Pais  = Est.Fk_Id_Pais
+    WHERE Mun.Id_Municipio = _Id_Municipio
+    LIMIT 1;
+END$$
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto jerárquico necesario para que el formulario de edición se autocomplete.
+   ============================================================================================ */
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarDireccionEspecifica
+   ============================================================================================
+   ¿CUÁNDO SE USA?
+   --------------
+   Cuando el usuario abre la pantalla "Editar Dirección" o un modal de detalle.
+
+   ¿QUÉ RESUELVE?
+   --------------
+   Devuelve el registro de la Dirección por Id, incluyendo su estatus (Activo/Inactivo),
+   para que el frontend pueda:
+   - Precargar inputs (Clave / Nombre)
+   - Mostrar el estatus actual
+   - Decidir si habilita acciones (reactivar / desactivar)
+
+   NOTA DE DISEÑO
+   --------------
+   - NO filtramos por Activo=1 aquí, porque para edición/admin necesitas poder
+     consultar también direcciones inactivas.
+   - Validamos Id y existencia para devolver errores controlados.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_ConsultarDireccionEspecifica$$
+CREATE PROCEDURE SP_ConsultarDireccionEspecifica(
+    IN _Id_CatDirecc INT
+)
+BEGIN
+    /* ------------------------------------------------------------
+       VALIDACIÓN 1: Id válido
+       - Evita llamadas con NULL, 0, negativos, etc.
+       ------------------------------------------------------------ */
+    IF _Id_CatDirecc IS NULL OR _Id_CatDirecc <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: Id_CatDirecc inválido.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       VALIDACIÓN 2: La Dirección existe
+       - Si no existe, no tiene sentido cargar el formulario
+       ------------------------------------------------------------ */
+    IF NOT EXISTS (SELECT 1 FROM Cat_Direcciones WHERE Id_CatDirecc = _Id_CatDirecc) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: La Dirección no existe.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       CONSULTA PRINCIPAL
+       - Trae la dirección exacta
+       - LIMIT 1 por seguridad
+       ------------------------------------------------------------ */
+    SELECT
+        Id_CatDirecc,
+        Clave,
+        Nombre,
+        Activo,
+        created_at,
+        updated_at
+    FROM Cat_Direcciones
+    WHERE Id_CatDirecc = _Id_CatDirecc
+    LIMIT 1;
+END$$
+
+DELIMITER ;
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarSubDireccionEspecifica
+   ============================================================================================
+   ¿CUÁNDO SE USA?
+   --------------
+   Cuando el usuario abre la pantalla "Editar Subdirección".
+
+   ¿QUÉ RESUELVE?
+   --------------
+   Para editar una Subdirección, el frontend normalmente necesita:
+   - Datos de la Subdirección (Clave, Nombre, Activo)
+   - La Dirección a la que pertenece (para preseleccionar el -- DROPdown de Dirección)
+   - Datos de esa Dirección (Nombre/Clave) para mostrar contexto visual.
+
+   NOTA DE DISEÑO
+   --------------
+   - NO filtramos por Activo=1 porque un admin puede necesitar editar una subdirección inactiva.
+   - El JOIN asegura que traemos la data del Padre en un solo viaje a la BD.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_ConsultarSubDireccionEspecifica$$
+CREATE PROCEDURE SP_ConsultarSubDireccionEspecifica(
+    IN _Id_CatSubDirec INT
+)
+BEGIN
+    /* ------------------------------------------------------------
+       VALIDACIÓN 1: Id válido
+       ------------------------------------------------------------ */
+    IF _Id_CatSubDirec IS NULL OR _Id_CatSubDirec <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: Id_CatSubDirec inválido.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       VALIDACIÓN 2: La Subdirección existe
+       ------------------------------------------------------------ */
+    IF NOT EXISTS (
+		SELECT 1 
+        FROM Cat_Subdirecciones 
+        WHERE Id_CatSubDirec = _Id_CatSubDirec
+			) THEN
+				SIGNAL SQLSTATE '45000'
+				SET MESSAGE_TEXT = 'ERROR: La Subdirección no existe.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       CONSULTA PRINCIPAL
+       - Trae Subdirección + Dirección padre
+       - Esto permite precargar el -- DROPdown de Dirección en el frontend
+       ------------------------------------------------------------ */
+    SELECT
+        /* Datos de la Subdirección (Hijo) */
+        Subd.Id_CatSubDirec,
+        Subd.Clave          AS Clave_Subdireccion,
+        Subd.Nombre         AS Nombre_Subdireccion,
+        
+        /* Datos de la Dirección (Padre) para el -- DROPdown */
+        Subd.Fk_Id_CatDirecc AS Id_Direccion,
+        Direc.Clave          AS Clave_Direccion,
+        Direc.Nombre         AS Nombre_Direccion,
+        
+        Subd.Activo         AS Activo_Subdireccion,
+        Subd.created_at     AS Created_at_SubDireccion,
+        Subd.updated_at     AS Updated_at_SubDireccion
+
+    FROM Cat_Subdirecciones Subd
+    JOIN Cat_Direcciones Direc ON Direc.Id_CatDirecc = Subd.Fk_Id_CatDirecc
+    WHERE Subd.Id_CatSubDirec = _Id_CatSubDirec
+    LIMIT 1;
+END$$
+
+DELIMITER ;
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarGerenciaEspecifica
+   ============================================================================================
+   ¿CUÁNDO SE USA?
+   --------------
+   Cuando el usuario abre la pantalla "Editar Gerencia".
+
+   ¿QUÉ RESUELVE?
+   --------------
+   Para que tu formulario sea rápido e inteligente, necesitas reconstruir la jerarquía completa:
+   - La Gerencia actual (Clave, Nombre, Activo)
+   - La Subdirección actual a la que pertenece
+   - La Dirección actual a la que pertenece esa Subdirección
+
+   Con esta info tu frontend puede:
+   - Precargar inputs: Clave_Gerencia y Nombre_Gerencia
+   - Preseleccionar -- DROPdown Dirección con Id_Direccion actual
+   - Cargar y Preseleccionar -- DROPdown Subdirección con Id_Subdireccion actual
+
+   ¿POR QUÉ JOIN Y NO VISTA?
+   -------------------------
+   Un SP con parámetros es más rápido y seguro que filtrar una Vista enorme con un WHERE.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_ConsultarGerenciaEspecifica$$
+CREATE PROCEDURE SP_ConsultarGerenciaEspecifica(
+    IN _Id_CatGeren INT
+)
+BEGIN
+    /* ------------------------------------------------------------
+       VALIDACIÓN 1: Id válido
+       ------------------------------------------------------------ */
+    IF _Id_CatGeren IS NULL OR _Id_CatGeren <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: Id_CatGeren inválido.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       VALIDACIÓN 2: La Gerencia existe
+       ------------------------------------------------------------ */
+    IF NOT EXISTS (
+		SELECT 1 
+        FROM Cat_Gerencias_Activos 
+        WHERE Id_CatGeren = _Id_CatGeren
+			) THEN
+			SIGNAL SQLSTATE '45000'
+				SET MESSAGE_TEXT = 'ERROR: La Gerencia no existe.';
+    END IF;
+
+    /* ------------------------------------------------------------
+       CONSULTA PRINCIPAL
+       - Trae Gerencia + Subdirección + Dirección
+       - Reconstruye la ruta completa (Abuelo -> Padre -> Nieto)
+       ------------------------------------------------------------ */
+    SELECT
+        /* Datos de la Gerencia (Nieto) */
+        Geren.Id_CatGeren,
+        Geren.Clave          AS Clave_Gerencia,
+        Geren.Nombre         AS Nombre_Gerencia,
+
+        /* Datos de la Subdirección (Padre) */
+        Geren.Fk_Id_CatSubDirec AS Id_Subdireccion,
+        Subd.Clave              AS Clave_Subdireccion,
+        Subd.Nombre             AS Nombre_Subdireccion,
+
+        /* Datos de la Dirección (Abuelo) */
+        Subd.Fk_Id_CatDirecc    AS Id_Direccion,
+        Direc.Clave             AS Clave_Direccion,
+        Direc.Nombre            AS Nombre_Direccion,
+        
+        Geren.Activo         AS Activo_Gerencia,
+        Geren.created_at     AS Created_at_Gerencia,
+        Geren.updated_at     AS Updated_at_Gerencia
+        
+    FROM Cat_Gerencias_Activos Geren
+    JOIN Cat_Subdirecciones Subd ON Subd.Id_CatSubDirec = Geren.Fk_Id_CatSubDirec
+    JOIN Cat_Direcciones Direc   ON Direc.Id_CatDirecc = Subd.Fk_Id_CatDirecc
+    WHERE Geren.Id_CatGeren = _Id_CatGeren
+    LIMIT 1;
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto jerárquico necesario para que el formulario de edición se autocomplete.
+   ============================================================================================ */
+   
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarDepartamentoEspecifico
+   ============================================================================================
+   OBJETIVO DE NEGOCIO
+   -------------------
+   Recuperar la "Hoja de Vida" completa de un Departamento para dos casos de uso principales:
+   1. Visualización de Detalle (Modal o Pantalla de Información).
+   2. Precarga del Formulario de Edición (Update).
+
+   EL RETO TÉCNICO (RECONSTRUCCIÓN JERÁRQUICA INVERSA)
+   ---------------------------------------------------
+   En la base de datos, el Departamento es una entidad "hoja" que solo conoce a su padre inmediato:
+   el Municipio (`Fk_Id_Municipio_CatDep`).
+   
+   Sin embargo, en la pantalla de edición, la interfaz de usuario (UI) presenta tres selectores 
+   dependientes (Dropdowns en Cascada):
+      [ Seleccione País ]  ->  [ Seleccione Estado ]  ->  [ Seleccione Municipio ]
+   
+   Si el Backend solo devolviera el `Id_Municipio`, el Frontend no sabría qué País ni qué Estado 
+   seleccionar automáticamente en los dos primeros niveles.
+   
+   SOLUCIÓN:
+   Este SP reconstruye la cadena genealógica hacia atrás (Hijo -> Padre -> Abuelo -> Bisabuelo)
+   para entregar todos los IDs necesarios en una sola consulta eficiente.
+
+   ESTRATEGIA DE INTEGRIDAD (POR QUÉ USAR LEFT JOIN)
+   -------------------------------------------------
+   Se ha decidido utilizar `LEFT JOIN` para enlazar la cadena geográfica (Municipio -> Estado -> País).
+   
+   ¿Por qué no INNER JOIN?
+   - Robustez ante Datos Corruptos: En sistemas legados o tras migraciones masivas, es posible
+     que un Departamento tenga un ID de Municipio que ya no existe (huérfano) o sea NULL.
+   - Si usáramos INNER JOIN, ese registro desaparecería de la consulta, haciendo imposible abrir
+     su formulario de edición para CORREGIRLO.
+   - Con LEFT JOIN, recuperamos los datos del Departamento incluso si su ubicación está rota.
+     Los campos geográficos vendrán en NULL, alertando visualmente que se requiere reparación.
+
+   DICCIONARIO DE DATOS (OUTPUT)
+   -----------------------------
+   A) Datos de Identidad:
+      - Id_Departamento, Codigo, Nombre, Dirección Física, Estatus.
+   
+   B) Datos de Contexto Geográfico (IDs):
+      - Id_Pais, Id_Estado, Id_Municipio (Vitales para `value=""` en los <select>).
+   
+   C) Datos Visuales (Labels):
+      - Nombre_Pais, Nombre_Estado, Nombre_Municipio (Para contexto humano).
+
+   VALIDACIONES PREVIAS
+   --------------------
+   - Validación defensiva de parámetros (Id Nulo o <= 0).
+   - Verificación de existencia rápida (Fail Fast) antes de ejecutar los Joins.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarDepartamentoEspecifico`$$
+CREATE PROCEDURE `SP_ConsultarDepartamentoEspecifico`(
+    IN _Id_CatDep INT
+)
+BEGIN
+    /* ----------------------------------------------------------------------------------------
+       1. VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Evitamos desperdiciar ciclos de CPU si el parámetro es basura.
+       ---------------------------------------------------------------------------------------- */
+    IF _Id_CatDep IS NULL OR _Id_CatDep <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El ID del Departamento es inválido.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       2. VALIDACIÓN DE EXISTENCIA (FAIL FAST)
+       Verificamos rápido contra el índice primario si el registro existe.
+       Si no existe, abortamos antes de hacer los JOINs costosos.
+       ---------------------------------------------------------------------------------------- */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Departamentos` WHERE `Id_CatDep` = _Id_CatDep) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: El Departamento solicitado no existe o fue eliminado.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       3. CONSULTA PRINCIPAL (RECONSTRUCCIÓN JERÁRQUICA)
+       ---------------------------------------------------------------------------------------- */
+    SELECT 
+        /* --- BLOQUE A: DATOS PROPIOS DEL DEPARTAMENTO --- */
+        `Dep`.`Id_CatDep`            AS `Id_Departamento`,
+        `Dep`.`Codigo`               AS `Codigo_Departamento`,
+        `Dep`.`Nombre`               AS `Nombre_Departamento`,
+        `Dep`.`Direccion_Fisica`     AS `Descripcion_Direccion_Dep`,
+
+        /* --- BLOQUE B: JERARQUÍA GEOGRÁFICA (IDs para Lógica de UI) --- */
+        /* Estos campos son los que el Frontend bindeará a los ng-model o v-model de los Selects */
+        `Mun`.`Id_Municipio`,
+        /* --- BLOQUE C: JERARQUÍA GEOGRÁFICA (Nombres para Visualización) --- */
+        /* Contexto visual para el usuario ("Ah, este es el de Villahermosa, Tabasco") */
+        `Mun`.`Codigo`               AS `Codigo_Municipio`,
+        `Mun`.`Nombre`               AS `Nombre_Municipio`,
+        --  `Mun`.`Activo`               AS `Estatus_Municipio`,
+
+        `Edo`.`Id_Estado`,
+        `Edo`.`Codigo`               AS `Codigo_Estado`,
+        `Edo`.`Nombre`               AS `Nombre_Estado`,
+        
+        `Pais`.`Id_Pais`,        
+        `Pais`.`Codigo`              AS `Codigo_Pais`,
+        `Pais`.`Nombre`              AS `Nombre_Pais`,
+        
+        `Dep`.`Activo`               AS `Estatus_Departamento`,
+        `Dep`.`created_at`,
+        `Dep`.`updated_at`
+        
+    FROM `Cat_Departamentos` `Dep`
+    
+    /* LEFT JOIN 1: Intentamos obtener el Municipio (Padre directo) */
+    /* Si falla, Mun.* será NULL, pero tendremos los datos de Dep */
+    LEFT JOIN `Municipio` `Mun` 
+        ON `Dep`.`Fk_Id_Municipio_CatDep` = `Mun`.`Id_Municipio`
+    
+    /* LEFT JOIN 2: Si tenemos Municipio, intentamos obtener su Estado (Abuelo) */
+    LEFT JOIN `Estado` `Edo`    
+        ON `Mun`.`Fk_Id_Estado` = `Edo`.`Id_Estado`
+    
+    /* LEFT JOIN 3: Si tenemos Estado, intentamos obtener su País (Bisabuelo) */
+    LEFT JOIN `Pais` `Pais`     
+        ON `Edo`.`Fk_Id_Pais` = `Pais`.`Id_Pais`
+
+    WHERE `Dep`.`Id_CatDep` = _Id_CatDep
+    LIMIT 1;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto jerárquico necesario para que el formulario de edición se autocomplete.
+   ============================================================================================ */
+   
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarCentroTrabajoEspecifico
+   ============================================================================================
+   OBJETIVO DE NEGOCIO
+   -------------------
+   Recuperar la "Hoja de Vida" completa de un Centro de Trabajo (CT) para su visualización 
+   detallada o para precargar el formulario de "Editar Centro de Trabajo".
+
+   ¿QUÉ PROBLEMA RESUELVE? (EL RETO DEL DROPDOWN EN CASCADA)
+   ---------------------------------------------------------
+   En la base de datos, el CT solo conoce a su padre inmediato: el Municipio (`Fk_Id_Municipio_CatCT`).
+   Sin embargo, en la pantalla de edición, el usuario ve tres selectores:
+      [ País ] -> [ Estado ] -> [ Municipio ]
+   
+   Si solo devolvemos el ID del Municipio, el frontend no sabe qué País ni qué Estado 
+   seleccionar automáticamente. Este SP reconstruye esa cadena genealógica hacia atrás:
+      CT -> Municipio (Hijo) -> Estado (Padre) -> País (Abuelo).
+
+   ESTRATEGIA DE INTEGRIDAD DE DATOS (LEFT JOIN)
+   ---------------------------------------------
+   Se utilizan `LEFT JOIN` en lugar de `INNER JOIN` para la cadena geográfica.
+   
+   ¿Por qué?
+   - Robustez ante Datos Migrados: Si se cargó un CT desde Excel con un Municipio erróneo 
+     o nulo (NULL), un INNER JOIN ocultaría el registro, haciendo imposible editarlo para corregirlo.
+   - Con LEFT JOIN, recuperamos los datos del CT incluso si su ubicación está rota. 
+     Esto permite abrir la pantalla de edición y asignar la ubicación correcta.
+
+   DATOS RETORNADOS
+   ----------------
+   1. Identidad del CT: ID, Código, Nombre, Dirección Física, Estatus.
+   2. Contexto Geográfico: 
+      - IDs para el valor de los <select> (Id_Pais, Id_Estado, Id_Municipio).
+      - Nombres para etiquetas visuales o validación.
+   3. Auditoría: Fechas de creación y actualización.
+
+   VALIDACIONES
+   ------------
+   - El ID debe ser válido (>0).
+   - El registro debe existir.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarCentroTrabajoEspecifico`$$
+CREATE PROCEDURE `SP_ConsultarCentroTrabajoEspecifico`(
+    IN _Id_CatCT INT
+)
+BEGIN
+    /* ----------------------------------------------------------------------------------------
+       1. VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Evitamos ejecutar consultas si el ID no tiene sentido.
+       ---------------------------------------------------------------------------------------- */
+    IF _Id_CatCT IS NULL OR _Id_CatCT <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El ID del Centro de Trabajo es inválido.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       2. VALIDACIÓN DE EXISTENCIA
+       Verificamos rápido si el registro existe antes de hacer los JOINS costosos.
+       ---------------------------------------------------------------------------------------- */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Centros_Trabajo` WHERE `Id_CatCT` = _Id_CatCT) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: El Centro de Trabajo solicitado no existe o fue eliminado.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       3. CONSULTA PRINCIPAL (RECONSTRUCCIÓN JERÁRQUICA)
+       ---------------------------------------------------------------------------------------- */
+    SELECT 
+        /* --- DATOS PROPIOS DEL CENTRO DE TRABAJO --- */
+        `CT`.`Id_CatCT`,
+        `CT`.`Codigo`           AS `Codigo_CT`,
+        `CT`.`Nombre`           AS `Nombre_CT`,
+        `CT`.`Direccion_Fisica`,
+
+
+        /* --- NIVEL 1: MUNICIPIO (Padre directo) --- */
+        `Mun`.`Id_Municipio`,
+        `Mun`.`Codigo`          AS `Codigo_Municipio`,
+        `Mun`.`Nombre`          AS `Nombre_Municipio`,
+        `Mun`.`Activo`          AS `Estatus_Municipio`,
+
+        /* --- NIVEL 2: ESTADO (Abuelo - Derivado del Municipio) --- */
+        `Edo`.`Id_Estado`,      /* Vital para pre-seleccionar el Dropdown de Estado */
+        `Edo`.`Codigo`          AS `Codigo_Estado`,
+        `Edo`.`Nombre`          AS `Nombre_Estado`,
+
+        /* --- NIVEL 3: PAÍS (Bisabuelo - Derivado del Estado) --- */
+        `Pais`.`Id_Pais`,       /* Vital para pre-seleccionar el Dropdown de País */
+        `Pais`.`Codigo`         AS `Codigo_Pais`,
+        `Pais`.`Nombre`         AS `Nombre_Pais`,
+
+        `CT`.`Activo`           AS `Estatus_CT`,
+        `CT`.`created_at`,
+        `CT`.`updated_at`
+        
+    FROM `Cat_Centros_Trabajo` `CT`
+    
+    /* LEFT JOIN 1: Intentamos obtener el Municipio */
+    LEFT JOIN `Municipio` `Mun` 
+        ON `CT`.`Fk_Id_Municipio_CatCT` = `Mun`.`Id_Municipio`
+    
+    /* LEFT JOIN 2: Si tenemos Municipio, intentamos obtener su Estado */
+    LEFT JOIN `Estado` `Edo`    
+        ON `Mun`.`Fk_Id_Estado` = `Edo`.`Id_Estado`
+    
+    /* LEFT JOIN 3: Si tenemos Estado, intentamos obtener su País */
+    LEFT JOIN `Pais` `Pais`     
+        ON `Edo`.`Fk_Id_Pais` = `Pais`.`Id_Pais`
+
+    WHERE `CT`.`Id_CatCT` = _Id_CatCT
+    LIMIT 1;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto jerárquico necesario para que el formulario de edición se autocomplete.
+   ============================================================================================ */
+   
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarSedeEspecifica
+   ============================================================================================
+   AUTOR: Tu Equipo de Desarrollo / Gemini
+   FECHA: 2026
+
+   OBJETIVO DE NEGOCIO
+   -------------------
+   Recuperar la "Hoja de Vida" completa de una Sede (CASES) para dos casos de uso críticos:
+   1. Visualización de Detalle (Ficha Técnica completa con inventario detallado).
+   2. Precarga del Formulario de Edición (Update).
+
+   EL RETO TÉCNICO (RECONSTRUCCIÓN JERÁRQUICA INVERSA)
+   ---------------------------------------------------
+   En el modelo de datos normalizado, la Sede (`Cat_Cases_Sedes`) es una entidad que se vincula 
+   geográficamente solo a nivel de MUNICIPIO (`Fk_Id_Municipio`).
+   
+   Sin embargo, la Interfaz de Usuario (UI) para la edición requiere desplegar selectores
+   dependientes (Cascading Dropdowns) para permitir al usuario cambiar la ubicación:
+      [ Seleccione País ]  ->  [ Seleccione Estado ]  ->  [ Seleccione Municipio ]
+   
+   Si el Backend solo devolviera el `Id_Municipio`, el Frontend no sabría qué País ni qué Estado 
+   pre-seleccionar automáticamente, rompiendo la experiencia de usuario.
+   
+   SOLUCIÓN:
+   Este SP realiza una "Reconstrucción Jerárquica Inversa" (Hijo -> Padre -> Abuelo -> Bisabuelo)
+   realizando los JOINs ascendentes (Sede -> Municipio -> Estado -> País) para entregar
+   los 3 IDs necesarios (Id_Pais, Id_Estado, Id_Municipio) en una sola consulta eficiente.
+
+   ESTRATEGIA DE INTEGRIDAD (POR QUÉ USAR LEFT JOIN)
+   -------------------------------------------------
+   Se ha decidido utilizar `LEFT JOIN` para enlazar la cadena geográfica.
+   
+   Justificación Técnica:
+   - Robustez ante Datos Migrados o Corruptos: En una carga masiva histórica, es posible que
+     una Sede tenga un ID de Municipio que ya no existe (huérfano) o sea inválido.
+   - Si usáramos INNER JOIN, ese registro desaparecería de la consulta, haciendo imposible 
+     abrir su formulario de edición para CORREGIRLO.
+   - Con LEFT JOIN, recuperamos los datos de la Sede (Nombre, Inventario) incluso si su 
+     ubicación está rota. Los campos geográficos vendrán en NULL, permitiendo al usuario
+     seleccionar una nueva ubicación válida y salvar el registro.
+
+   DICCIONARIO DE DATOS (OUTPUT)
+   -----------------------------
+   A) Datos de Identidad:
+      - Id_Sede, Codigo, Nombre, Dirección Física, Estatus.
+   
+   B) Datos de Infraestructura (Inventario Variable):
+      - Capacidad_Total, Aulas, Salas, Alberca, Campos, Muelles, Botes.
+      - Estos valores son vitales para llenar los inputs numéricos del formulario.
+   
+   C) Contexto Geográfico (IDs y Etiquetas):
+      - IDs: Id_Pais, Id_Estado, Id_Municipio (Para el `value=""` de los <select>).
+      - Nombres: Para contexto visual en la UI ("Ah, esta sede está en Veracruz").
+
+   VALIDACIONES PREVIAS
+   --------------------
+   - Validación defensiva de parámetros (Id Nulo o <= 0).
+   - Verificación de existencia rápida (Fail Fast) antes de ejecutar los Joins costosos.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarSedeEspecifica`$$
+CREATE PROCEDURE `SP_ConsultarSedeEspecifica`(
+    IN _Id_Sede INT
+)
+BEGIN
+    /* ----------------------------------------------------------------------------------------
+       1. VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Evitamos desperdiciar ciclos de CPU y conexiones si el parámetro recibido es basura.
+       ---------------------------------------------------------------------------------------- */
+    IF _Id_Sede IS NULL OR _Id_Sede <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El ID de la Sede es inválido.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       2. VALIDACIÓN DE EXISTENCIA (FAIL FAST)
+       Verificamos rápido contra el índice primario si el registro existe.
+       Si no existe, abortamos inmediatamente con un mensaje de negocio claro, antes de 
+       intentar hacer JOINs complejos.
+       ---------------------------------------------------------------------------------------- */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Cases_Sedes` WHERE `Id_CatCases_Sedes` = _Id_Sede) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: La Sede solicitada no existe o fue eliminada.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       3. CONSULTA PRINCIPAL (RECONSTRUCCIÓN JERÁRQUICA + INVENTARIO)
+       ---------------------------------------------------------------------------------------- */
+    SELECT 
+        /* --- BLOQUE A: DATOS DE IDENTIDAD --- */
+        `S`.`Id_CatCases_Sedes`      AS `Id_Sede`,
+        `S`.`Codigo`                 AS `Codigo_Sede`,
+        `S`.`Nombre`                 AS `Nombre_Sede`,
+        `S`.`DescripcionDireccion`   AS `Direccion_Fisica`,
+
+        /* --- BLOQUE B: DATOS DE INFRAESTRUCTURA (INVENTARIO DETALLADO) --- */
+        /* Estos campos alimentan los inputs numéricos del formulario.
+           Al ser columnas NOT NULL DEFAULT 0, siempre retornarán un entero válido. */
+        `S`.`Capacidad_Total`,
+        `S`.`Aulas`,
+        `S`.`Salas`,
+        `S`.`Alberca`,
+        `S`.`CampoPracticas_Escenario`   AS `Campos_Practica`,
+        `S`.`Muelle_Entrenamiento_Botes` AS `Muelles`,
+        `S`.`BoteSalvavida_Capacidad`    AS `Capacidad_Botes`,
+
+        /* --- BLOQUE C: JERARQUÍA GEOGRÁFICA (IDs para Lógica de UI) --- */
+        /* Estos campos son los que el Frontend bindeará a los ng-model o v-model de los Selects.
+           Si la ubicación está rota, vendrán en NULL. */
+        /* --- BLOQUE D: JERARQUÍA GEOGRÁFICA (Nombres para Visualización) --- */
+        /* Contexto visual para que el usuario confirme la ubicación actual */
+        `Mun`.`Id_Municipio`,
+        `Mun`.`Nombre`               AS `Nombre_Municipio`,
+        
+        `Edo`.`Id_Estado`,    /* Vital para pre-seleccionar el Dropdown de Estado */
+        `Edo`.`Nombre`               AS `Nombre_Estado`,
+        
+        `Pais`.`Id_Pais`,     /* Vital para pre-seleccionar el Dropdown de País */
+        `Pais`.`Nombre`              AS `Nombre_Pais`,
+
+        /* --- BLOQUE E: METADATOS Y AUDITORÍA --- */
+        `S`.`Activo`                 AS `Estatus_Sede`,
+        `S`.`created_at`,
+        `S`.`updated_at`
+
+    FROM `Cat_Cases_Sedes` `S`
+    
+    /* LEFT JOIN 1: Intentamos obtener el Municipio (Padre directo) */
+    /* Usamos LEFT JOIN para permitir cargar la ficha incluso si el ID de municipio es inválido */
+    LEFT JOIN `Municipio` `Mun` 
+        ON `S`.`Fk_Id_Municipio` = `Mun`.`Id_Municipio`
+    
+    /* LEFT JOIN 2: Si tenemos Municipio, intentamos obtener su Estado (Abuelo) */
+    LEFT JOIN `Estado` `Edo`    
+        ON `Mun`.`Fk_Id_Estado` = `Edo`.`Id_Estado`
+    
+    /* LEFT JOIN 3: Si tenemos Estado, intentamos obtener su País (Bisabuelo) */
+    LEFT JOIN `Pais` `Pais`      
+        ON `Edo`.`Fk_Id_Pais` = `Pais`.`Id_Pais`
+
+    WHERE `S`.`Id_CatCases_Sedes` = `_Id_Sede`
+    LIMIT 1;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto jerárquico necesario para que el formulario de edición se autocomplete.
+   ============================================================================================ */
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarRegimenEspecifico
+   ============================================================================================
+   AUTOR: Arquitectura de Datos / Gemini
+   FECHA: 2026
+
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Recuperar la "Ficha Técnica" completa y sin procesar (Raw Data) de un Régimen de Contratación
+   específico, identificado por su llave primaria.
+
+   CASOS DE USO (CONTEXTO DE UI):
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - El sistema necesita los valores exactos que están en la base de datos para llenar los
+        inputs del formulario (Nombre, Código, Descripción).
+      - Es crítico recibir `NULL` real en el Código (si no existe) en lugar de un texto formateado
+        como "S/C" (que vendría de una Vista), para que el input aparezca vacío y no con texto basura.
+
+   B) VISUALIZACIÓN DE DETALLE (MODAL / CARD):
+      - Mostrar la información extendida y los metadatos de auditoría (creación/actualización)
+        que no suelen aparecer en la tabla principal (Grid) por cuestiones de espacio.
+
+   2. ARQUITECTURA DE DATOS (SINGLE SOURCE OF TRUTH)
+   -------------------------------------------------
+   A diferencia de los listados masivos que consumen `Vista_Regimenes`, este procedimiento ataca
+   directamente a la tabla física `Cat_Regimenes_Trabajo`.
+
+   JUSTIFICACIÓN TÉCNICA (POR QUÉ NO USAR LA VISTA):
+   - Integridad de Edición: Las vistas suelen aplicar transformaciones cosméticas (formatos de fecha,
+     concatenaciones, manejo de nulos visuales). Para editar, requerimos la fidelidad absoluta del dato.
+   - Desacoplamiento: Si en el futuro la Vista cambia para mostrar "Código - Nombre" concatenado,
+     este cambio rompería el formulario de edición. Al usar el SP directo, garantizamos estabilidad.
+
+   3. ESTRATEGIA DE SEGURIDAD Y VALIDACIÓN (DEFENSIVE PROGRAMMING)
+   ---------------------------------------------------------------
+   - Fail Fast: Se validan los parámetros de entrada antes de tocar el disco duro.
+   - Verificación de Existencia: Se comprueba si el registro existe antes de devolver un resultset.
+     Esto permite diferenciar entre "No hay datos" (Resultset vacío) y "Error de Petición" (ID no existe),
+     permitiendo al Frontend mostrar mensajes de error más precisos (404 Not Found).
+
+   4. DICCIONARIO DE DATOS (OUTPUT)
+   --------------------------------
+   Retorna una única fila conteniendo:
+     - [Identidad]: Id_CatRegimen, Codigo, Nombre.
+     - [Detalle]: Descripción.
+     - [Control]: Activo (Vital para saber si el botón de acción debe decir "Activar" o "Desactivar").
+     - [Auditoría]: created_at, updated_at.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarRegimenEspecifico`$$
+CREATE PROCEDURE `SP_ConsultarRegimenEspecifico`(
+    IN _Id_Regimen INT -- Identificador único del Régimen a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido cumpla con los requisitos mínimos
+       antes de intentar cualquier operación de lectura. Evita inyecciones de valores absurdos.
+       ======================================================================================== */
+    IF _Id_Regimen IS NULL OR _Id_Regimen <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El Identificador del Régimen es inválido (Debe ser un entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE DISEÑO (VISIBILIDAD):
+       - No filtramos por `Activo = 1`. 
+       - Razón: El administrador debe poder consultar (y eventualmente editar) registros que 
+         están dados de baja lógica para poder reactivarlos o auditar su historia.
+         Ocultar los inactivos aquí impediría su restauración.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Regimenes_Trabajo` WHERE `Id_CatRegimen` = _Id_Regimen) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: El Régimen solicitado no existe en el catálogo o fue eliminado físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo y puro (Raw Data).
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: IDENTIDAD DEL REGISTRO --- */
+        `Id_CatRegimen`,
+        
+        /* --- GRUPO B: DATOS EDITABLES --- */
+        /* Nota: El Frontend debe estar preparado para recibir NULL en 'Codigo' 
+           y renderizarlo como un campo de texto vacío. */
+        `Codigo`,       
+        `Nombre`,
+        `Descripcion`,
+        
+        /* --- GRUPO C: METADATOS DE CONTROL DE CICLO DE VIDA --- */
+        /* Este valor (0 o 1) determina el estado del "Switch" o "Toggle" en la UI */
+        `Activo`,       
+        
+        /* --- GRUPO D: AUDITORÍA DE SISTEMA --- */
+        `created_at`,
+        `updated_at`
+        
+    FROM `Cat_Regimenes_Trabajo`
+    WHERE `Id_CatRegimen` = _Id_Regimen
+    LIMIT 1; /* Buena práctica: Asegura al optimizador que se detenga tras el primer hallazgo */
+
+END$$
+
+DELIMITER ;
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Esta sección contiene rutinas optimizadas para la recuperación de un único registro (Single Row).
+   Son fundamentales para la Experiencia de Usuario (UX) en los formularios de mantenimiento.
+   ============================================================================================ */
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarRegionEspecifica
+   ============================================================================================
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Recuperar la "Ficha Técnica" completa y sin procesar (Raw Data) de una Región Operativa
+   específica, identificada por su llave primaria (`Id_CatRegion`).
+
+   Este endpoint de base de datos habilita dos flujos críticos en la interfaz:
+   
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - Cuando un administrador hace clic en "Editar", el sistema debe llenar los campos del 
+        formulario con la información actual.
+      - Requisito Crítico: La fidelidad del dato. Si el código en la base de datos es NULL, 
+        el SP debe devolver NULL (para que el input aparezca vacío) y no una cadena transformada 
+        como "S/C" (que es útil para reportes, pero dañina para edición).
+
+   B) VISUALIZACIÓN DE DETALLE (AUDITORÍA VISUAL):
+      - Permite mostrar metadatos que no caben en la tabla principal (Grid), como las fechas 
+        exactas de creación y última modificación (`created_at`, `updated_at`).
+
+   2. ARQUITECTURA DE DATOS (DIRECT TABLE ACCESS PATTERN)
+   ------------------------------------------------------
+   A diferencia de los listados masivos que consumen la `Vista_Regiones` (Capa de Abstracción), 
+   este procedimiento consulta directamente la tabla física `Cat_Regiones_Trabajo`.
+
+   JUSTIFICACIÓN TÉCNICA:
+   - Desacoplamiento de Capas: Las Vistas están diseñadas para "Lectura Humana" (formateo, 
+     concatenación, reemplazo de nulos). Los SPs de Edición requieren "Lectura de Sistema" 
+     (datos puros y tipos nativos) para asegurar que el UPDATE posterior sea consistente.
+   - Performance: Al acceder por Primary Key (`Id_CatRegion`), la búsqueda es O(1) (costo constante),
+     lo que garantiza una respuesta instantánea (<10ms) incluso con millones de registros.
+
+   3. ESTRATEGIA DE SEGURIDAD (DEFENSIVE PROGRAMMING)
+   --------------------------------------------------
+   - Fail Fast (Fallo Rápido): Validamos los parámetros de entrada antes de ejecutar la consulta.
+     Esto protege al motor de base de datos de procesar peticiones basura.
+   - Verificación de Existencia: Comprobamos si el registro existe antes de intentar devolverlo.
+     Esto permite diferenciar semánticamente entre un "Error 404" (No existe) y un "Resultset Vacío",
+     facilitando el manejo de errores en el Backend (API).
+
+   4. VISIBILIDAD DE DATOS (TOTAL VISIBILITY)
+   ------------------------------------------
+   - Regla: NO se aplica filtro por estatus (`WHERE Activo = 1`).
+   - Razón: Un administrador necesita poder consultar una Región que fue eliminada lógicamente 
+     (Inactiva) para ver su historial o decidir si la reactiva. Ocultarla aquí impediría su gestión.
+
+   5. DICCIONARIO DE DATOS (OUTPUT)
+   --------------------------------
+   Retorna una única fila con:
+     - [Identidad]: Id_CatRegion, Codigo, Nombre.
+     - [Detalle]: Descripcion (Notas operativas).
+     - [Control]: Activo (1 = Operativo, 0 = Baja Lógica).
+     - [Auditoría]: created_at, updated_at.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarRegionEspecifica`$$
+CREATE PROCEDURE `SP_ConsultarRegionEspecifica`(
+    IN _Id_Region INT -- Identificador único de la Región a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido cumpla con los requisitos mínimos
+       antes de intentar cualquier operación de lectura. Evita inyecciones de valores absurdos.
+       ======================================================================================== */
+    IF _Id_Region IS NULL OR _Id_Region <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El Identificador de la Región es inválido (Debe ser un entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE IMPLEMENTACIÓN:
+       Usamos `SELECT 1` que es más ligero que seleccionar columnas reales, ya que solo
+       necesitamos confirmar la presencia de la llave en el índice.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Regiones_Trabajo` WHERE `Id_CatRegion` = _Id_Region) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: La Región solicitada no existe en el catálogo o fue eliminada físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo y puro (Raw Data).
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: IDENTIDAD DEL REGISTRO --- */
+        /* Este ID es inmutable y debe viajar oculto en el formulario para el UPDATE posterior */
+        `Id_CatRegion`,
+        
+        /* --- GRUPO B: DATOS EDITABLES --- */
+        /* Nota: 'Codigo' puede ser NULL en la BD. El Frontend debe manejar esto renderizando
+           un input vacío, permitiendo al usuario asignar un código si lo desea. */
+        `Codigo`,       
+        `Nombre`,
+        `Descripcion`,
+        
+        /* --- GRUPO C: METADATOS DE CONTROL DE CICLO DE VIDA --- */
+        /* Este valor (0 o 1) determina el estado visual del Switch/Toggle en la UI.
+           1 = Verde/Activo, 0 = Gris/Inactivo. */
+        `Activo`,       
+        
+        /* --- GRUPO D: AUDITORÍA DE SISTEMA --- */
+        /* Útiles para mostrar etiquetas informativas como "Creado el..." o "Última edición..." */
+        `created_at`,
+        `updated_at`
+        
+    FROM `Cat_Regiones_Trabajo`
+    WHERE `Id_CatRegion` = _Id_Region
+    LIMIT 1; /* Buena práctica: Detiene el escaneo del motor al encontrar la primera coincidencia (aunque sea PK) */
+
+END$$
+
+DELIMITER ;
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Esta sección contiene rutinas optimizadas para la recuperación de un único registro (Single Row).
+   Son fundamentales para la Experiencia de Usuario (UX) en los formularios de mantenimiento.
+   ============================================================================================ */
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarPuestoEspecifico
+   ============================================================================================
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Recuperar la "Ficha Técnica" completa, cruda y sin procesar (Raw Data) de un Puesto de Trabajo
+   específico, identificado por su llave primaria (`Id_CatPuesto`).
+
+   CASOS DE USO (CONTEXTO DE UI):
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - Cuando el administrador va a editar un puesto, el formulario debe llenarse con los datos
+        exactos que residen en la base de datos.
+      - Requisito Crítico: Si el campo `Codigo` es NULL en la BD, el SP debe devolver NULL.
+        No debe devolver transformaciones cosméticas (como "S/C" o "-"), ya que esto ensuciaría
+        el input del formulario, obligando al usuario a borrar texto basura antes de editar.
+
+   B) VISUALIZACIÓN DE DETALLE (AUDITORÍA):
+      - Permite visualizar metadatos de auditoría (`created_at`, `updated_at`) que normalmente
+        se ocultan en los listados generales para no saturar la vista.
+
+   2. ARQUITECTURA DE DATOS (DIRECT TABLE ACCESS)
+   ----------------------------------------------
+   Este procedimiento consulta directamente la tabla física `Cat_Puestos_Trabajo`, evitando el uso
+   de la vista `Vista_Puestos`.
+
+   JUSTIFICACIÓN TÉCNICA:
+   - Desacoplamiento de Presentación: Las Vistas están optimizadas para lectura humana (formateo,
+     etiquetas amigables). Los SPs de Edición están optimizados para lectura de sistema (datos
+     puros para el binding de modelos en Angular/React/Vue/Laravel).
+   - Performance: El acceso por Primary Key (`Id_CatPuesto`) tiene un costo computacional de O(1),
+     garantizando una respuesta instantánea.
+
+   3. ESTRATEGIA DE SEGURIDAD (DEFENSIVE PROGRAMMING)
+   --------------------------------------------------
+   - Validación de Entrada: Se rechazan IDs nulos o negativos antes de consultar.
+   - Fail Fast (Fallo Rápido): Se verifica la existencia del registro antes de intentar devolver datos.
+     Esto permite al Backend diferenciar claramente entre un error 404 (Recurso no encontrado) y
+     un error 500 (Fallo de servidor).
+
+   4. VISIBILIDAD (SCOPE)
+   ----------------------
+   - NO se filtra por `Activo = 1`.
+   - Razón: Un puesto puede estar "Desactivado" (Baja Lógica). El administrador necesita poder
+     consultarlo para ver su información y decidir si lo Reactiva. Ocultarlo aquí haría imposible
+     su gestión.
+
+   5. DICCIONARIO DE DATOS (OUTPUT)
+   --------------------------------
+   Retorna una única fila (Single Row) con:
+     - [Identidad]: Id_CatPuesto, Codigo, Nombre.
+     - [Detalle]: Descripcion.
+     - [Control]: Activo (Vital para el estado del switch de activación).
+     - [Auditoría]: created_at, updated_at.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarPuestoEspecifico`$$
+CREATE PROCEDURE `SP_ConsultarPuestoEspecifico`(
+    IN _Id_Puesto INT -- Identificador único del Puesto a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido sea un entero positivo válido.
+       Evita cargas innecesarias al motor de base de datos con peticiones basura.
+       ======================================================================================== */
+    IF _Id_Puesto IS NULL OR _Id_Puesto <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El Identificador del Puesto es inválido (Debe ser un entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE IMPLEMENTACIÓN:
+       Usamos `SELECT 1` que es más ligero que seleccionar columnas reales, ya que solo
+       necesitamos confirmar la presencia de la llave en el índice primario.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Puestos_Trabajo` WHERE `Id_CatPuesto` = _Id_Puesto) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: El Puesto de Trabajo solicitado no existe en el catálogo o fue eliminado físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo y puro (Raw Data).
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: IDENTIDAD DEL REGISTRO --- */
+        /* Este ID es la llave primaria inmutable. El Frontend debe mantenerlo protegido. */
+        `Id_CatPuesto`,
+        
+        /* --- GRUPO B: DATOS EDITABLES --- */
+        /* Nota: 'Codigo' puede ser NULL. El API debe entregar 'null' nativo JSON, 
+           no strings vacíos ni "null" como texto. */
+        `Codigo`,        
+        `Nombre`,
+        `Descripcion`,
+        
+        /* --- GRUPO C: METADATOS DE CONTROL DE CICLO DE VIDA --- */
+        /* Este valor (0 o 1) indica si el puesto es utilizable actualmente.
+           1 = Activo/Visible, 0 = Inactivo/Oculto (Baja Lógica). */
+        `Activo`,        
+        
+        /* --- GRUPO D: AUDITORÍA DE SISTEMA --- */
+        /* Fechas útiles para mostrar en el pie de página del modal de detalle. */
+        `created_at`,
+        `updated_at`
+        
+    FROM `Cat_Puestos_Trabajo`
+    WHERE `Id_CatPuesto` = _Id_Puesto
+    LIMIT 1; /* Buena práctica: Asegura al optimizador que se detenga tras el primer hallazgo. */
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto necesario para que el formulario de edición se autocomplete correctamente.
+   ============================================================================================ */
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarRolEspecifico
+   ============================================================================================
+   
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Recuperar la "Ficha Técnica" completa, cruda y fidedigna (Raw Data) de un Rol de Sistema
+   específico, identificado por su llave primaria (`Id_Rol`).
+
+   CASOS DE USO (CONTEXTO DE UI):
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - Cuando un Administrador de Seguridad va a modificar un perfil, el formulario debe 
+        llenarse con los datos exactos que residen en la base de datos.
+      - Requisito Crítico: La fidelidad del dato. Si la descripción es NULL, debe llegar NULL.
+        El `Codigo` es vital porque es el enlace con los Middlewares del Backend.
+
+   B) VISUALIZACIÓN DE DETALLE (AUDITORÍA):
+      - Permite visualizar metadatos de auditoría (`created_at`, `updated_at`) para saber
+        cuándo se creó o modificó el permiso por última vez.
+
+   2. ARQUITECTURA DE DATOS (DIRECT TABLE ACCESS)
+   ----------------------------------------------
+   Este procedimiento consulta directamente la tabla física `Cat_Roles`, evitando el uso
+   de la vista `Vista_Roles`.
+
+   JUSTIFICACIÓN TÉCNICA:
+   - Desacoplamiento de Presentación: `Vista_Roles` aplica alias como `Codigo_Rol` o `Estatus_Rol`
+     pensados para reportes JSON legibles. Sin embargo, para el UPDATE, el ORM o el Backend 
+     suelen esperar los nombres de columna originales (`Codigo`, `Activo`) para hacer el 
+     binding automático.
+   - Performance: El acceso por Primary Key (`Id_Rol`) es de costo computacional O(1).
+
+   3. ESTRATEGIA DE SEGURIDAD (DEFENSIVE PROGRAMMING)
+   --------------------------------------------------
+   - Validación de Entrada: Se rechazan IDs nulos o negativos antes de tocar el disco.
+   - Fail Fast (Fallo Rápido): Se verifica la existencia del registro antes de intentar devolver datos.
+     Esto permite diferenciar un "Error 404" (Rol no existe) de un "Error 500".
+
+   4. VISIBILIDAD (SCOPE)
+   ----------------------
+   - NO se filtra por `Activo = 1`.
+   - Razón: Un rol puede estar "Revocado" (Inactivo). El administrador necesita poder 
+     consultarlo para ver sus detalles y decidir si lo Reactiva. 
+
+   5. DICCIONARIO DE DATOS (OUTPUT)
+   --------------------------------
+   Retorna una única fila (Single Row) con:
+     - [Identidad]: Id_Rol, Codigo (Slug), Nombre.
+     - [Contexto]: Descripcion.
+     - [Control]: Activo (1 = Vigente, 0 = Revocado).
+     - [Auditoría]: created_at, updated_at.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarRolEspecifico`$$
+CREATE PROCEDURE `SP_ConsultarRolEspecifico`(
+    IN _Id_Rol INT -- Identificador único del Rol a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido sea un entero positivo válido.
+       Evita cargas innecesarias al motor de base de datos con peticiones basura.
+       ======================================================================================== */
+    IF _Id_Rol IS NULL OR _Id_Rol <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El Identificador del Rol es inválido (Debe ser un entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE IMPLEMENTACIÓN:
+       Usamos `SELECT 1` que es más ligero que seleccionar columnas reales, ya que solo
+       necesitamos confirmar la presencia de la llave en el índice primario.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Roles` WHERE `Id_Rol` = _Id_Rol) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: El Rol de Sistema solicitado no existe o fue eliminado físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo y puro (Raw Data).
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: IDENTIDAD DEL REGISTRO --- */
+        /* Este ID es la llave primaria inmutable. */
+        `Id_Rol`,
+        
+        /* --- GRUPO B: DATOS EDITABLES CRÍTICOS --- */
+        /* 'Codigo': Es el Slug usado en el código fuente (ej: @can('ADMIN')). 
+           Es vital que este dato sea exacto. */
+        `Codigo`,        
+        `Nombre`,
+        
+        /* 'Descripcion': Contexto del alcance del rol. */
+        `Descripcion`,
+        
+        /* --- GRUPO C: METADATOS DE CONTROL DE CICLO DE VIDA --- */
+        /* Este valor (0 o 1) indica si el rol está vigente.
+           1 = Activo/Asignable, 0 = Inactivo/Revocado (Baja Lógica). */
+        `Activo`,        
+        
+        /* --- GRUPO D: AUDITORÍA DE SISTEMA --- */
+        /* Fechas útiles para mostrar en el pie de página del modal de detalle. */
+        `created_at`,
+        `updated_at`
+        
+    FROM `Cat_Roles`
+    WHERE `Id_Rol` = _Id_Rol
+    LIMIT 1; /* Buena práctica: Asegura al optimizador que se detenga tras el primer hallazgo. */
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto necesario para que el formulario de edición se autocomplete correctamente.
+   ============================================================================================ */
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarPerfilPropio
+   ============================================================================================
+
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Recuperar el "Expediente Digital" del usuario autenticado, optimizado específicamente para
+   la hidratación (pre-llenado) de formularios reactivos en el Frontend (Angular/React/Vue).
+
+   A diferencia de un reporte visual, este SP está diseñado para ser consumido por componentes
+   de UI tipo "Smart Form", donde los catálogos ya están cargados en memoria y solo se requiere
+   el ID (Foreign Key) para realizar el "Data Binding" automático.
+
+   2. FILOSOFÍA DE DISEÑO: "LEAN PAYLOAD" (CARGA LIGERA)
+   -----------------------------------------------------
+   - Principio: "No envíes lo que el cliente ya sabe".
+   - Implementación: Se eliminan campos redundantes como `Nombre_Regimen` o `Codigo_Puesto`,
+     ya que el Frontend posee esos textos en sus listas desplegables.
+   - Beneficio: Reducción drástica del tamaño del JSON de respuesta y menor latencia de red.
+
+   3. ARQUITECTURA DE DATOS (ENTITY-CENTRIC GROUPING)
+   --------------------------------------------------
+   La proyección de columnas (SELECT) se organiza agrupando lógicamente los datos por Entidad
+   de Negocio (Usuario, InfoPersonal, CentroTrabajo, Departamento), facilitando la lectura
+   y el mantenimiento del código.
+
+   4. RETO TÉCNICO: RECONSTRUCCIÓN DE CASCADAS (REVERSE LOOKUP)
+   ------------------------------------------------------------
+   El modelo de datos normalizado solo almacena el nodo hoja (ej: `Id_CentroTrabajo`).
+   Sin embargo, la UI requiere seleccionar primero los nodos padres (País -> Estado -> Municipio).
+   
+   SOLUCIÓN: Este SP realiza "JOINS Ascendentes" para recuperar los IDs de toda la cadena
+   jerárquica (Ancestros), permitiendo que el Frontend dispare la carga de listas dependientes
+   automáticamente al recibir los datos.
+
+   5. ESTRATEGIA DE INTEGRIDAD (ANTI-FRAGILITY)
+   --------------------------------------------
+   Se utilizan exclusivamente `LEFT JOIN`.
+   Razón: Garantizar que el perfil sea accesible incluso si existen inconsistencias referenciales
+   (ej: un Centro de Trabajo antiguo eliminado físicamente). Esto permite al usuario entrar
+   al formulario y corregir la información faltante ("Self-Healing Data").
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarPerfilPropio`$$
+CREATE PROCEDURE `SP_ConsultarPerfilPropio`(
+    IN _Id_Usuario_Sesion INT -- Token de sesión o ID primario del usuario
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Evitar ejecución de querys costosos si el parámetro es inválido.
+       ======================================================================================== */
+    IF _Id_Usuario_Sesion IS NULL OR _Id_Usuario_Sesion <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: Identificador de sesión inválido.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el usuario exista antes de intentar ensamblar su perfil complejo.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Usuarios` WHERE `Id_Usuario` = _Id_Usuario_Sesion) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El usuario solicitado no existe.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA MAESTRA (LEAN PROJECTION)
+       ======================================================================================== */
+    SELECT 
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 1: IDENTIDAD Y ACCESO (Tabla Usuarios)
+           Datos crudos para visualización estática en el encabezado del perfil.
+           --------------------------------------------------------------------------------- */
+        `U`.`Id_Usuario`,
+        `U`.`Ficha`,
+
+        `U`.`Foto_Perfil_Url`,-- (Habilitar si se requiere mostrar el avatar)
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 2: DATOS PERSONALES Y HUMANOS (Tabla Info_Personal)
+           Datos editables que se bindean a inputs de texto y fecha.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Id_InfoPersonal`,
+        
+        /* Helper Visual: Concatenación para título de página (Solo lectura) */
+        CONCAT(IFNULL(`IP`.`Nombre`,''), ' ', IFNULL(`IP`.`Apellido_Paterno`,''), ' ', IFNULL(`IP`.`Apellido_Materno`,'')) AS `Nombre_Completo_Concatenado`,
+        
+        `IP`.`Nombre`,
+        `IP`.`Apellido_Paterno`,
+        `IP`.`Apellido_Materno`,
+        `IP`.`Fecha_Nacimiento`,
+        `IP`.`Fecha_Ingreso`,
+        
+        `U`.`Email`,
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 3: ADSCRIPCIÓN SIMPLE (SOLO IDs)
+           Estos campos alimentan -- DROPdowns independientes (sin dependencias).
+           El Frontend usará el ID para seleccionar el objeto correcto de su catálogo en memoria.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatRegimen`   AS `Id_Regimen`,
+        -- `Reg`.`Codigo`            AS `Codigo_Regimen`,
+        -- `Reg`.`Nombre`            AS `Nombre_Regimen`,
+        
+        `IP`.`Fk_Id_CatPuesto`    AS `Id_Puesto`,
+        -- `Puesto`.`Codigo`         AS `Codigo_Puesto`,
+        -- `Puesto`.`Nombre`         AS `Nombre_Puesto`,
+        
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 4: CENTRO DE TRABAJO (CT) + TRIGGERS DE CASCADA
+           Objetivo: Permitir la reconstrucción automática de los selectores geográficos.
+           Lógica: Recuperamos los ancestros (Mun -> Edo -> Pais) para que la UI sepa qué cargar.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatCT`            AS `Id_CentroTrabajo`, -- Valor seleccionado
+        -- `CT`.`Codigo`             AS `Codigo_CentroTrabajo`,
+        -- `CT`.`Nombre`             AS `Nombre_CentroTrabajo`,
+        -- `CT`.`Direccion_Fisica`   AS `Direccion_Fisica_CT`,
+        
+        /* Ancestros Geográficos del CT */
+        /* Reconstrucción Geográfica Ascendente (Child -> Parent -> Grandparent) */
+        `CT`.`Fk_Id_Municipio_CatCT` AS `Id_Municipio_CT`,
+        -- `MunCT`.`Codigo`          AS `Codigo_Municipio_CT`,
+        -- `MunCT`.`Nombre`          AS `Nombre_Municipio_CT`,
+        
+        `EdoCT`.`Id_Estado`       AS `Id_Estado_CT`, -- Necesario para pre-cargar combo Estado
+        -- `EdoCT`.`Codigo`          AS `Codigo_Estado_CT`,
+        -- `EdoCT`.`Nombre`       AS `Nombre_Estado_CT`,
+        
+        `PaisCT`.`Id_Pais`        AS `Id_Pais_CT`,   -- Necesario para pre-cargar combo País
+        -- `PaisCT`.`Codigo`         AS `Codigo_Pais_CT`,
+        -- `PaisCT`.`Nombre`      AS `Nombre_Pais_CT`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 5: DEPARTAMENTO + TRIGGERS DE CASCADA
+           Misma lógica que el CT: ID del Departamento + IDs de la ruta geográfica.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatDep`           AS `Id_Departamento`, -- Valor seleccionado
+        -- `Dep`.`Codigo`            AS `Codigo_Departamento`,
+        -- `Dep`.`Nombre`            AS `Nombre_Departamento`,
+        -- `Dep`.`Direccion_Fisica`  AS `Direccion_Fisica_Depto`,
+        
+        /* Ancestros Geográficos del Departamento */
+        /* Reconstrucción Geográfica Ascendente */
+        `Dep`.`Fk_Id_Municipio_CatDep` AS `Id_Municipio_Depto`,
+        -- `MunDep`.`Codigo`         AS `Codigo_Municipio_Depto`,
+        -- `MunDep`.`Nombre`         AS `Nombre_Municipio_Depto`,
+        
+        `EdoDep`.`Id_Estado`      AS `Id_Estado_Depto`,
+        -- `EdoDep`.`Codigo`         AS `Codigo_Estado_Depto`,
+        -- `EdoDep`.`Nombre`      AS `Nombre_Estado_Depto`,
+        
+        `PaisDep`.`Id_Pais`       AS `Id_Pais_Depto`,
+        -- `PaisDep`.`Codigo`        AS `Codigo_Pais_Depto`,
+        -- `PaisDep`.`Nombre`     AS `Nombre_Pais_Depto`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 5.5: REGIÓN OPERATIVA
+           Zona geográfica macro de operación.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatRegion`    AS `Id_Region`,
+        -- `Region`.`Codigo`         AS `Codigo_Region`,
+        -- `Region`.`Nombre`         AS `Nombre_Region`,
+        
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 6: JERARQUÍA ORGANIZACIONAL (ORGANIGRAMA)
+           Reconstrucción de la cadena de mando para selectores dependientes.
+           Ruta: Gerencia (Hijo) -> Subdirección (Padre) -> Dirección (Abuelo).
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatGeren`         AS `Id_Gerencia`,      -- Valor seleccionado
+        
+        /* Ancestros Organizacionales */
+        /* Nivel 1: Gerencia (Nodo Hoja - Asignación Directa) */
+        -- `Ger`.`Clave`             AS `Clave_Gerencia`,
+        -- `Ger`.`Nombre`            AS `Nombre_Gerencia`,
+
+        /* Nivel 2: Subdirección (Nodo Padre - Derivado) */
+         `Ger`.`Fk_Id_CatSubDirec` AS `Id_Subdireccion`,
+        -- `Sub`.`Clave`             AS `Clave_Subdireccion`,
+        -- `Sub`.`Nombre`            AS `Nombre_Subdireccion`,
+
+        /* Nivel 3: Dirección Corporativa (Nodo Abuelo - Derivado) */
+        `Sub`.`Fk_Id_CatDirecc`   AS `Id_Direccion`,
+        -- `Dir`.`Clave`             AS `Clave_Direccion`,
+        -- `Dir`.`Nombre`            AS `Nombre_Direccion`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 7: METADATOS Y AUDITORÍA
+           Información de control interno y clasificación.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Nivel`,
+        `IP`.`Clasificacion`,
+        `U`.`Activo`              AS `Estatus_Usuario`,
+        `IP`.`updated_at`         AS `Ultima_Modificacion_Perfil`
+
+    FROM `Usuarios` `U`
+
+    /* =================================================================================
+       ESTRATEGIA DE UNIONES (JOINS)
+       Se prioriza la robustez (LEFT JOIN) sobre la estrictez (INNER JOIN).
+       ================================================================================= */
+
+    /* 1. NÚCLEO: Enlace con la tabla extendida de información personal */
+    LEFT JOIN `Info_Personal` `IP` 
+        ON `U`.`Fk_Id_InfoPersonal` = `IP`.`Id_InfoPersonal`
+
+    /* 2. JERARQUÍA ORGANIZACIONAL: Recuperación de IDs Padres para Cascada */
+    LEFT JOIN `Cat_Gerencias_Activos` `Ger` ON `IP`.`Fk_Id_CatGeren` = `Ger`.`Id_CatGeren`
+    LEFT JOIN `Cat_Subdirecciones` `Sub`    ON `Ger`.`Fk_Id_CatSubDirec` = `Sub`.`Id_CatSubDirec`
+	LEFT JOIN `Cat_Direcciones` `Dir`       ON `Sub`.`Fk_Id_CatDirecc` = `Dir`.`Id_CatDirecc`
+    
+    /* 3. GEOGRAFÍA CT: Recuperación de IDs Ancestros para Cascada */
+    LEFT JOIN `Cat_Centros_Trabajo` `CT` ON `IP`.`Fk_Id_CatCT` = `CT`.`Id_CatCT`
+    LEFT JOIN `Municipio` `MunCT`        ON `CT`.`Fk_Id_Municipio_CatCT` = `MunCT`.`Id_Municipio`
+    LEFT JOIN `Estado` `EdoCT`           ON `MunCT`.`Fk_Id_Estado` = `EdoCT`.`Id_Estado`
+    LEFT JOIN `Pais` `PaisCT`            ON `EdoCT`.`Fk_Id_Pais` = `PaisCT`.`Id_Pais`
+
+    /* 4. GEOGRAFÍA DEPTO: Recuperación de IDs Ancestros para Cascada */
+    LEFT JOIN `Cat_Departamentos` `Dep` ON `IP`.`Fk_Id_CatDep` = `Dep`.`Id_CatDep`
+    LEFT JOIN `Municipio` `MunDep`      ON `Dep`.`Fk_Id_Municipio_CatDep` = `MunDep`.`Id_Municipio`
+    LEFT JOIN `Estado` `EdoDep`         ON `MunDep`.`Fk_Id_Estado` = `EdoDep`.`Id_Estado`
+    LEFT JOIN `Pais` `PaisDep`          ON `EdoDep`.`Fk_Id_Pais` = `PaisDep`.`Id_Pais`
+
+    /* NOTA DE OPTIMIZACIÓN: 
+       Se han eliminado los JOINs a las tablas `Cat_Puestos_Trabajo`, `Cat_Regimenes_Trabajo`
+       y `Cat_Regiones_Trabajo` ya que, bajo la estrategia "Lean Payload", no se requieren
+       sus campos descriptivos (Nombre, Código), bastando con el ID presente en `Info_Personal`. */
+
+    /* 5. OTROS CATÁLOGOS SIMPLES */
+    LEFT JOIN `Cat_Regimenes_Trabajo` `Reg`   ON `IP`.`Fk_Id_CatRegimen` = `Reg`.`Id_CatRegimen`
+    LEFT JOIN `Cat_Regiones_Trabajo` `Region` ON `IP`.`Fk_Id_CatRegion` = `Region`.`Id_CatRegion`
+    LEFT JOIN `Cat_Puestos_Trabajo` `Puesto`  ON `IP`.`Fk_Id_CatPuesto` = `Puesto`.`Id_CatPuesto`
+
+    /* =================================================================================
+       FILTRO FINAL
+       ================================================================================= */
+    WHERE `U`.`Id_Usuario` = _Id_Usuario_Sesion
+    LIMIT 1;
+
+END$$
+
+DELIMITER ;
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarUsuarioPorAdmin
+   ============================================================================================
+
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Proveer al Administrador de Sistema una "Radiografía Técnica Completa" de cualquier usuario
+   registrado en la base de datos, independientemente de su estado actual (Activo/Inactivo).
+
+   Este procedimiento actúa como el backend para dos interfaces críticas:
+     A) VISOR DE DETALLE (MODAL DE AUDITORÍA): Donde se inspecciona quién es el usuario,
+        quién lo registró, cuándo y qué permisos tiene.
+     B) FORMULARIO DE EDICIÓN AVANZADA (UPDATE): Donde el Admin puede corregir datos,
+        reasignar roles, cambiar de adscripción o bloquear el acceso.
+
+   2. DIFERENCIAS CRÍTICAS VS "PERFIL PROPIO" (SCOPE)
+   --------------------------------------------------
+   Mientras que el perfil de usuario es de "Solo Lectura" para ciertos campos, esta vista:
+     - EXPONE LA SEGURIDAD: Devuelve el `Id_Rol` y `Activo` para permitir su modificación.
+     - ROMPE EL SILENCIO: No filtra por `Activo = 1`. Permite gestionar usuarios "Baneados"
+       o dados de baja lógica para su eventual reactivación.
+     - TRAZABILIDAD TOTAL: Revela la identidad de los autores de los cambios (Created_By/Updated_By),
+       resolviendo sus IDs a Nombres Reales mediante JOINs reflexivos.
+
+   3. ARQUITECTURA DE DATOS: "LEAN HYDRATION" (CARGA LIGERA)
+   ---------------------------------------------------------
+   Para optimizar el rendimiento del Frontend (Angular/React/Vue), este SP no devuelve los
+   catálogos completos (listas de opciones), sino los punteros (Foreign Keys) necesarios para
+   que los componentes visuales se "auto-configuren":
+   
+     - Estrategia de Binding: Se retornan IDs (ej: `Id_Puesto`) para que el -- DROPdown seleccione
+       automáticamente la opción correcta.
+     - Estrategia de Cascada: Se retornan los IDs de los Ancestros (Municipio -> Estado -> País)
+       para disparar la carga de listas dependientes sin intervención del usuario.
+
+   4. DICCIONARIO DE DATOS (OUTPUT CONTRACT)
+   -----------------------------------------
+   El resultset se estructura en 10 bloques lógicos que mapean directamente las secciones
+   visuales del formulario de Administración:
+     [1] Identidad Digital (Ficha/Email)
+     [2] Seguridad (Rol/Estatus)
+     [3] Identidad Humana (Nombres)
+     [4] Adscripción Simple (Puesto)
+     [5] Ubicación Física (Centro de Trabajo + Geografía)
+     [6] Ubicación Administrativa (Departamento + Geografía)
+     [7] Región Operativa
+     [8] Jerarquía de Mando (Organigrama)
+     [9] Metadatos (Nivel/Clasificación)
+     [10] Auditoría (Fechas y Responsables)
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarUsuarioPorAdmin`$$
+
+CREATE PROCEDURE `SP_ConsultarUsuarioPorAdmin`(
+    IN _Id_Usuario_Objetivo INT -- Identificador único del usuario a inspeccionar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido cumpla con los requisitos mínimos
+       antes de intentar cualquier operación de lectura. 
+       ======================================================================================== */
+    IF _Id_Usuario_Objetivo IS NULL OR _Id_Usuario_Objetivo <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: Identificador de usuario objetivo inválido (Debe ser entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE DISEÑO: Aquí NO validamos `Activo = 1`. El Admin tiene permisos de "Dios"
+       para ver registros eliminados lógicamente.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Usuarios` WHERE `Id_Usuario` = _Id_Usuario_Objetivo) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El usuario solicitado no existe en la base de datos.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA MAESTRA (FULL DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo, reconstruyendo jerarquías y auditoría.
+       ======================================================================================== */
+    SELECT 
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 1: IDENTIDAD Y CREDENCIALES
+           Datos fundamentales de la cuenta. Inmutables para el usuario, editables por Admin.
+           --------------------------------------------------------------------------------- */
+        `U`.`Id_Usuario`,
+        `U`.`Ficha`,
+
+        `U`.`Foto_Perfil_Url`, -- Recurso multimedia (Avatar)
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 2: DATOS PERSONALES (INFO HUMANOS)
+           Información demográfica proveniente de la tabla satélite `Info_Personal`.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Id_InfoPersonal`,
+        
+        /* Helper Visual: Nombre Completo Concatenado.
+           Útil para mostrar en el título del modal ("Editando a: JUAN PÉREZ") sin procesar en JS. */
+        CONCAT(IFNULL(`IP`.`Nombre`,''), ' ', IFNULL(`IP`.`Apellido_Paterno`,''), ' ', IFNULL(`IP`.`Apellido_Materno`,'')) AS `Nombre_Completo_Concatenado`,
+        
+        /* Datos atómicos para edición en inputs separados */
+        `IP`.`Nombre`,
+        `IP`.`Apellido_Paterno`,
+        `IP`.`Apellido_Materno`,
+        `IP`.`Fecha_Nacimiento`,
+        `IP`.`Fecha_Ingreso`,
+        
+        `U`.`Email`,
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 3: ADSCRIPCIÓN SIMPLE (SOLO IDs)
+           Estos campos no tienen dependencias complejas. El Frontend usará el ID para
+           seleccionar el valor correcto en el -- DROPdown correspondiente.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatRegimen`   AS `Id_Regimen`,
+        `IP`.`Fk_Id_CatPuesto`    AS `Id_Puesto`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 4: CENTRO DE TRABAJO + CASCADA GEOGRÁFICA (REVERSE LOOKUP)
+           El reto aquí es que `Info_Personal` solo guarda el ID del Centro de Trabajo.
+           Para que el Frontend pueda mostrar los selectores de País, Estado y Municipio
+           correctamente pre-llenados, debemos "subir" por la jerarquía y devolver esos IDs.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatCT`            AS `Id_CentroTrabajo`, -- Valor final seleccionado
+        
+        /* Triggers de Cascada Geográfica (Ancestros) */
+        `CT`.`Fk_Id_Municipio_CatCT`  AS `Id_Municipio_CT`,
+        `EdoCT`.`Id_Estado`           AS `Id_Estado_CT`,
+        `PaisCT`.`Id_Pais`            AS `Id_Pais_CT`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 5: DEPARTAMENTO + CASCADA GEOGRÁFICA
+           Misma lógica de reconstrucción inversa que el Centro de Trabajo.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatDep`           AS `Id_Departamento`, -- Valor final seleccionado
+        
+        /* Triggers de Cascada Geográfica (Ancestros) */
+        `Dep`.`Fk_Id_Municipio_CatDep` AS `Id_Municipio_Depto`,
+        `EdoDep`.`Id_Estado`           AS `Id_Estado_Depto`,
+        `PaisDep`.`Id_Pais`            AS `Id_Pais_Depto`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 6: REGIÓN OPERATIVA
+           Ubicada visualmente tras el Departamento según el flujo de UI definido.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatRegion`        AS `Id_Region`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 7: JERARQUÍA ORGANIZACIONAL (ORGANIGRAMA)
+           Reconstrucción de la cadena de mando administrativa.
+           Ruta: Gerencia (Hijo) -> Subdirección (Padre) -> Dirección (Abuelo).
+           --------------------------------------------------------------------------------- */
+        `IP`.`Fk_Id_CatGeren`         AS `Id_Gerencia`,      -- Valor final seleccionado
+        
+        /* Triggers de Cascada Organizacional (Ancestros) */
+        `Ger`.`Fk_Id_CatSubDirec`     AS `Id_Subdireccion`,
+        `Sub`.`Fk_Id_CatDirecc`       AS `Id_Direccion`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 8: METADATOS ADMINISTRATIVOS
+           Datos tabulares sin catálogo relacional fuerte.
+           --------------------------------------------------------------------------------- */
+        `IP`.`Nivel`,
+        `IP`.`Clasificacion`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 9: TRAZABILIDAD Y AUDITORÍA (RICH AUDIT TRAIL)
+           Aquí resolvemos la pregunta: "¿Quién hizo esto?".
+           En lugar de devolver IDs numéricos ("Creado por: 45"), hacemos JOINs reflexivos
+           para devolver el Nombre Real del responsable.
+           --------------------------------------------------------------------------------- */
+        /* DATOS DE CREACIÓN */
+        `U`.`created_at`              AS `Fecha_Registro`,
+        /* Si Created_By es NULL (migración), mostramos 'System', si no, el nombre concatenado */
+        CONCAT(IFNULL(`Info_Crt`.`Nombre`,'System'), ' ', IFNULL(`Info_Crt`.`Apellido_Paterno`,'')) AS `Creado_Por_Nombre`,
+        
+        /* DATOS DE ACTUALIZACIÓN */
+        `U`.`updated_at`              AS `Fecha_Ultima_Modificacion`,
+        CONCAT(IFNULL(`Info_Upd`.`Nombre`,''), ' ', IFNULL(`Info_Upd`.`Apellido_Paterno`,''))       AS `Actualizado_Por_Nombre`,
+
+        /* ---------------------------------------------------------------------------------
+           CONJUNTO 10: SEGURIDAD Y CONTROL (EXCLUSIVO ADMIN)
+           Ubicados al final del JSON para coincidir con la sección de "Acciones Críticas"
+           (Footer) del formulario de edición.
+           --------------------------------------------------------------------------------- */
+        `U`.`Fk_Rol`                  AS `Id_Rol`,           -- Binding para -- DROPdown de Roles
+        `U`.`Activo`                  AS `Estatus_Usuario`   -- Binding para Switch Activo/Inactivo
+
+    FROM `Usuarios` `U`
+
+    /* =================================================================================
+       ESTRATEGIA DE UNIONES (JOINS)
+       Se utiliza `LEFT JOIN` masivamente.
+       
+       JUSTIFICACIÓN DE INTEGRIDAD:
+       Priorizamos la "Disponibilidad de Datos" sobre la "Consistencia Estricta".
+       Si un usuario tiene un ID de Departamento que fue eliminado físicamente (catálogo roto),
+       un INNER JOIN ocultaría al usuario completo.
+       Con LEFT JOIN, mostramos al usuario con el campo departamento vacío, permitiendo
+       al Administrador detectar el error y corregirlo (Self-Healing).
+       ================================================================================= */
+
+    /* 1. NÚCLEO: Enlace con la tabla extendida de información personal */
+    LEFT JOIN `Info_Personal` `IP` 
+        ON `U`.`Fk_Id_InfoPersonal` = `IP`.`Id_InfoPersonal`
+
+    /* 2. JERARQUÍA ORGANIZACIONAL: Recuperación de IDs Padres para Cascada */
+    LEFT JOIN `Cat_Gerencias_Activos` `Ger` ON `IP`.`Fk_Id_CatGeren` = `Ger`.`Id_CatGeren`
+    LEFT JOIN `Cat_Subdirecciones` `Sub`    ON `Ger`.`Fk_Id_CatSubDirec` = `Sub`.`Id_CatSubDirec`
+    LEFT JOIN `Cat_Direcciones` `Dir`       ON `Sub`.`Fk_Id_CatDirecc` = `Dir`.`Id_CatDirecc`
+    
+    /* 3. GEOGRAFÍA CT: Recuperación de IDs Ancestros para Cascada */
+    LEFT JOIN `Cat_Centros_Trabajo` `CT` ON `IP`.`Fk_Id_CatCT` = `CT`.`Id_CatCT`
+    LEFT JOIN `Municipio` `MunCT`        ON `CT`.`Fk_Id_Municipio_CatCT` = `MunCT`.`Id_Municipio`
+    LEFT JOIN `Estado` `EdoCT`           ON `MunCT`.`Fk_Id_Estado` = `EdoCT`.`Id_Estado`
+    LEFT JOIN `Pais` `PaisCT`            ON `EdoCT`.`Fk_Id_Pais` = `PaisCT`.`Id_Pais`
+
+    /* 4. GEOGRAFÍA DEPTO: Recuperación de IDs Ancestros para Cascada */
+    LEFT JOIN `Cat_Departamentos` `Dep` ON `IP`.`Fk_Id_CatDep` = `Dep`.`Id_CatDep`
+    LEFT JOIN `Municipio` `MunDep`      ON `Dep`.`Fk_Id_Municipio_CatDep` = `MunDep`.`Id_Municipio`
+    LEFT JOIN `Estado` `EdoDep`         ON `MunDep`.`Fk_Id_Estado` = `EdoDep`.`Id_Estado`
+    LEFT JOIN `Pais` `PaisDep`          ON `EdoDep`.`Fk_Id_Pais` = `PaisDep`.`Id_Pais`
+
+    /* 5. AUDITORÍA (JOINS REFLEXIVOS / SELF-JOINS)
+       Objetivo: Obtener el nombre legible de los responsables de creación/edición.
+       Mecánica: 
+         a) `U` -> `Usuarios` (Creador) -> `Info_Personal` (Nombre Creador)
+         b) `U` -> `Usuarios` (Editor) -> `Info_Personal` (Nombre Editor)
+       Se usan alias distintos (`Info_Crt`, `Info_Upd`) para no colisionar con el `IP` principal. */
+       
+    /* 5.1 Resolver Identidad del Creador */
+    LEFT JOIN `Usuarios` `User_Crt`       ON `U`.`Fk_Usuario_Created_By` = `User_Crt`.`Id_Usuario`
+    LEFT JOIN `Info_Personal` `Info_Crt`  ON `User_Crt`.`Fk_Id_InfoPersonal` = `Info_Crt`.`Id_InfoPersonal`
+
+    /* 5.2 Resolver Identidad del Editor (Última modificación) */
+    LEFT JOIN `Usuarios` `User_Upd`       ON `U`.`Fk_Usuario_Updated_By` = `User_Upd`.`Id_Usuario`
+    LEFT JOIN `Info_Personal` `Info_Upd`  ON `User_Upd`.`Fk_Id_InfoPersonal` = `Info_Upd`.`Id_InfoPersonal`
+
+    /* =================================================================================
+       FILTRO FINAL
+       ================================================================================= */
+    WHERE `U`.`Id_Usuario` = _Id_Usuario_Objetivo
+    LIMIT 1; /* Buena práctica: Detener el escaneo tras el primer hallazgo */
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto necesario para que el formulario de edición se autocomplete correctamente.
+   ============================================================================================ */
+   
+   /* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarTipoInstruccionEspecifico
+   ============================================================================================
+   
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Recuperar la "Ficha Técnica" completa y sin procesar (Raw Data) de un Tipo de Instrucción
+   específico, identificado por su llave primaria (`Id_CatTipoInstCap`).
+
+   CASOS DE USO (CONTEXTO DE UI):
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - Cuando el administrador va a editar un tipo (ej: corregir "Teórico" por "Teórico-Práctico"),
+        el formulario debe llenarse con los datos exactos que residen en la base de datos.
+      - Requisito Crítico: Fidelidad del dato. Si la descripción es NULL en la BD, el SP debe
+        devolver NULL (o el driver de BD lo hará), para que el input del frontend se muestre limpio.
+
+   B) VISUALIZACIÓN DE DETALLE (AUDITORÍA):
+      - Permite visualizar metadatos de auditoría (`created_at`, `updated_at`) que normalmente
+        se ocultan en el Grid principal para mantener la limpieza visual.
+
+   2. ARQUITECTURA DE DATOS (DIRECT TABLE ACCESS)
+   ----------------------------------------------
+   Este procedimiento consulta directamente la tabla física `Cat_Tipos_Instruccion_Cap`, evitando
+   el uso de la vista `Vista_Cat_Tipos_Instruccion_Admin`.
+
+   JUSTIFICACIÓN TÉCNICA:
+   - Desacoplamiento de Presentación: Las Vistas pueden tener alias "humanizados" o lógica de 
+     presentación. Los SPs de Edición requieren los nombres de columna originales o mapeados
+     específicamente para el binding del modelo de datos en el Frontend.
+   - Performance: El acceso por Primary Key (`Id_CatTipoInstCap`) es de costo computacional O(1),
+     garantizando una respuesta instantánea (<1ms).
+
+   3. ESTRATEGIA DE SEGURIDAD (DEFENSIVE PROGRAMMING)
+   --------------------------------------------------
+   - Validación de Entrada: Se rechazan IDs nulos o negativos antes de tocar el disco.
+   - Fail Fast (Fallo Rápido): Se verifica la existencia del registro antes de intentar devolver datos.
+     Esto permite diferenciar claramente entre un "Error 404" (Recurso no encontrado) y un
+     "Error 500" (Fallo de servidor).
+
+   4. VISIBILIDAD (SCOPE)
+   ----------------------
+   - NO se filtra por `Activo = 1`.
+   - Razón: Un tipo de instrucción puede estar "Desactivado" (Baja Lógica). El administrador 
+     necesita poder consultarlo para ver su información y decidir si lo Reactiva. Ocultarlo 
+     aquí haría imposible su gestión desde el panel de administración.
+
+   5. DICCIONARIO DE DATOS (OUTPUT)
+   --------------------------------
+   Retorna una única fila (Single Row) con:
+      - [Identidad]: Id_CatTipoInstCap (Alias: Id_Tipo_Instruccion), Nombre.
+      - [Detalle]: Descripcion.
+      - [Control]: Activo (Vital para el estado del switch de activación en UI).
+      - [Auditoría]: created_at, updated_at.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarTipoInstruccionEspecifico`$$
+CREATE PROCEDURE `SP_ConsultarTipoInstruccionEspecifico`(
+    IN _Id_Tipo INT -- Identificador único del Tipo a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido sea un entero positivo válido.
+       Evita cargas innecesarias al motor de base de datos con peticiones basura.
+       ======================================================================================== */
+    IF _Id_Tipo IS NULL OR _Id_Tipo <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El Identificador del Tipo de Instrucción es inválido (Debe ser un entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE IMPLEMENTACIÓN:
+       Usamos `SELECT 1` que es más ligero que seleccionar columnas reales, ya que solo
+       necesitamos confirmar la presencia de la llave en el índice primario.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Tipos_Instruccion_Cap` WHERE `Id_CatTipoInstCap` = _Id_Tipo) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Tipo de Instrucción solicitado no existe o fue eliminado físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo y puro (Raw Data).
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: IDENTIDAD DEL REGISTRO --- */
+        /* Este ID es la llave primaria inmutable. */
+        `Id_CatTipoInstCap`  AS `Id_Tipo_Instruccion`,
+        
+        /* --- GRUPO B: DATOS EDITABLES --- */
+        /* El Frontend usará estos campos para llenar los inputs de texto. */
+        `Nombre`             AS `Nombre_Tipo_Instruccion`,
+        `Descripcion`        AS `Descripcion_Tipo_Instruccion`,
+        
+        /* --- GRUPO C: METADATOS DE CONTROL DE CICLO DE VIDA --- */
+        /* Este valor (0 o 1) indica si el tipo es utilizable actualmente.
+           1 = Activo/Visible, 0 = Inactivo/Oculto (Baja Lógica). */
+        `Activo`             AS `Estatus_Tipo_Instruccion`,        
+        
+        /* --- GRUPO D: AUDITORÍA DE SISTEMA --- */
+        /* Fechas útiles para mostrar en el pie de página del modal de detalle. */
+        `created_at`         AS `Fecha_Registro`,
+        `updated_at`         AS `Ultima_Modificacion`
+        
+    FROM `Cat_Tipos_Instruccion_Cap`
+    WHERE `Id_CatTipoInstCap` = _Id_Tipo
+    LIMIT 1; /* Buena práctica: Asegura al optimizador que se detenga tras el primer hallazgo. */
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto necesario para que el formulario de edición se autocomplete correctamente.
+   ============================================================================================ */
+   
+   /* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarTemaCapacitacionEspecifico
+   ============================================================================================
+   
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Recuperar la "Hoja de Vida" completa y técnica de un Tema de Capacitación (Curso) específico,
+   identificado por su llave primaria (`Id_Cat_TemasCap`).
+
+   CASOS DE USO (CONTEXTO DE UI):
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - El sistema necesita los valores exactos (Raw Data) para llenar los inputs:
+        * Input Texto: Nombre, Código.
+        * Input Numérico: Duración (Horas).
+        * Select/Dropdown: Tipo de Instrucción (Se necesita el ID del Padre para el 'value').
+
+   B) VISUALIZACIÓN DE DETALLE (FICHA TÉCNICA):
+      - Mostrar al administrador la información completa del curso, incluyendo a qué 
+        categoría pedagógica pertenece (Nombre del Tipo).
+
+   2. ARQUITECTURA DE DATOS (JOIN DE CONTEXTO)
+   -------------------------------------------
+   A diferencia de una consulta plana, aquí realizamos un `LEFT JOIN` con `Cat_Tipos_Instruccion_Cap`.
+   
+   ¿Por qué LEFT JOIN?
+   - Robustez: Si por algún error de base de datos (manipulación manual) el Tipo de Instrucción
+     asignado fue borrado físicamente, queremos seguir viendo el Curso (con el Tipo en NULL)
+     para poder corregirlo, en lugar de que el Curso se vuelva invisible (Ghost Record).
+
+   3. ESTRATEGIA DE SEGURIDAD (DEFENSIVE PROGRAMMING)
+   --------------------------------------------------
+   - Fail Fast: Validamos ID nulo o negativo al inicio.
+   - Verificación de Existencia: Comprobamos si el tema existe antes de intentar traer datos,
+     permitiendo diferenciar un error de red de un error 404 real.
+   - Visibilidad Total: NO filtramos por `Activo = 1`. Un administrador necesita acceso a 
+     registros históricos/inactivos.
+
+   4. DICCIONARIO DE DATOS (OUTPUT)
+   --------------------------------
+   Retorna una única fila con:
+      - [Identidad]: Id_Tema, Codigo_Tema, Nombre_Tema.
+      - [Contenido]: Descripcion_Tema, Duracion_Horas.
+      - [Clasificación]: Id_Tipo_Instruccion (FK), Nombre_Tipo_Instruccion (Label visual).
+      - [Control]: Estatus_Tema (Activo).
+      - [Auditoría]: Fecha_Registro, Ultima_Modificacion.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarTemaCapacitacionEspecifico`$$
+CREATE PROCEDURE `SP_ConsultarTemaCapacitacionEspecifico`(
+    IN _Id_Tema INT -- Identificador único del Tema a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Evitar desperdiciar recursos si el parámetro es basura.
+       ======================================================================================== */
+    IF _Id_Tema IS NULL OR _Id_Tema <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El ID del Tema es inválido.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST)
+       Objetivo: Dar un mensaje de error semántico si el curso no existe.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Temas_Capacitacion` WHERE `Id_Cat_TemasCap` = _Id_Tema) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Tema de Capacitación solicitado no existe o fue eliminado físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo, enriquecido con el nombre del Padre.
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: DATOS DEL TEMA (HIJO) --- */
+        `T`.`Id_Cat_TemasCap`        AS `Id_Tema`,
+        `T`.`Codigo`                 AS `Codigo_Tema`,
+        `T`.`Nombre`                 AS `Nombre_Tema`,
+        `T`.`Descripcion`            AS `Descripcion_Tema`,
+        `T`.`Duracion_Horas`         AS `Duracion_Horas`,
+        
+        /* --- GRUPO B: DATOS DE CLASIFICACIÓN (PADRE) --- */
+        /* FK: Vital para precargar el Select de "Tipo de Instrucción" (ng-model / v-model) */
+        `T`.`Fk_Id_CatTipoInstCap`   AS `Id_Tipo_Instruccion`, 
+        
+        /* Label: Contexto visual para mostrar al usuario sin hacer otra consulta */
+        `Tipo`.`Nombre`              AS `Nombre_Tipo_Instruccion`,
+        
+        /* --- GRUPO C: METADATOS DE CONTROL --- */
+        /* 1 = Activo, 0 = Inactivo (Para el switch de la UI) */
+        `T`.`Activo`                 AS `Estatus_Tema`,
+        
+        /* --- GRUPO D: AUDITORÍA --- */
+        `T`.`created_at`             AS `Fecha_Registro`,
+        `T`.`updated_at`             AS `Ultima_Modificacion`
+        
+    FROM `Cat_Temas_Capacitacion` `T`
+    
+    /* LEFT JOIN: Usamos LEFT por seguridad. Si el Tipo de Instrucción fue borrado físicamente 
+       (algo que no debería pasar pero prevenimos), aún devolvemos el Tema. */
+    LEFT JOIN `Cat_Tipos_Instruccion_Cap` `Tipo` 
+        ON `T`.`Fk_Id_CatTipoInstCap` = `Tipo`.`Id_CatTipoInstCap`
+        
+    WHERE `T`.`Id_Cat_TemasCap` = _Id_Tema
+    LIMIT 1;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto necesario para que el formulario de edición se autocomplete correctamente.
+   ============================================================================================ */
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_ConsultarEstatusCapacitacionEspecifico
+   ============================================================================================
+   
+   --------------------------------------------------------------------------------------------
+   I. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------------------------------------------------------------
+   [QUÉ ES]:
+   Es el endpoint de lectura de alta fidelidad para recuperar la "Ficha Técnica" de un Estatus 
+   de Capacitación específico, identificado por su llave primaria (`Id_CatEstCap`).
+
+   [PARA QUÉ SE USA (CONTEXTO DE UI)]:
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - Cuando el administrador va a modificar un estatus (ej: cambiar la regla de bloqueo), 
+        el formulario debe "hidratarse" con los datos exactos que residen en la base de datos.
+      - Requisito Crítico: La fidelidad del dato. Los valores se entregan crudos (Raw Data) 
+        para que los inputs del HTML reflejen la realidad sin transformaciones cosméticas.
+
+   B) VISUALIZACIÓN DE DETALLE (AUDITORÍA):
+      - Permite visualizar metadatos de auditoría (`created_at`, `updated_at`) y configuración 
+        lógica profunda (`Es_Final`) que suele estar oculta en el listado general.
+
+   --------------------------------------------------------------------------------------------
+   II. ARQUITECTURA DE DATOS (DIRECT TABLE ACCESS)
+   --------------------------------------------------------------------------------------------
+   Este procedimiento consulta directamente la tabla física `Cat_Estatus_Capacitacion`.
+   
+   [JUSTIFICACIÓN TÉCNICA]:
+   - Desacoplamiento de Presentación: A diferencia de las Vistas (que formatean datos para lectura 
+     humana), este SP prepara los datos para el consumo del sistema (Binding de Modelos).
+   - Performance: El acceso por Primary Key (`Id_CatEstCap`) tiene un costo computacional de O(1), 
+     garantizando una respuesta instantánea (<1ms).
+
+   --------------------------------------------------------------------------------------------
+   III. ESTRATEGIA DE SEGURIDAD (DEFENSIVE PROGRAMMING)
+   --------------------------------------------------------------------------------------------
+   - Validación de Entrada: Se rechazan IDs nulos o negativos antes de tocar el disco.
+   - Fail Fast (Fallo Rápido): Se verifica la existencia del registro antes de intentar devolver datos. 
+     Esto permite diferenciar claramente entre un "Error 404" (Recurso no encontrado) y un 
+     "Error 500" (Fallo de servidor).
+
+   --------------------------------------------------------------------------------------------
+   IV. VISIBILIDAD (SCOPE)
+   --------------------------------------------------------------------------------------------
+   - NO se filtra por `Activo = 1`.
+   - Razón: Un estatus puede estar "Desactivado" (Baja Lógica). El administrador necesita poder 
+     consultarlo para ver su configuración y decidir si lo Reactiva.
+
+   --------------------------------------------------------------------------------------------
+   V. DICCIONARIO DE DATOS (OUTPUT CONTRACT)
+   --------------------------------------------------------------------------------------------
+   Retorna una única fila (Single Row) mapeada semánticamente:
+      - [Id_Estatus]: Llave primaria.
+      - [Codigo_Estatus]: Clave corta técnica.
+      - [Nombre_Estatus]: Etiqueta humana.
+      - [Descripcion_Estatus]: Contexto.
+      - [Bandera_de_Bloqueo]: Alias de negocio para `Es_Final` (0=Bloquea, 1=Libera).
+      - [Estatus]: Alias de negocio para `Activo` (1=Vigente, 0=Baja).
+      - [Auditoría]: Fechas de creación y modificación.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarEstatusCapacitacionEspecifico`$$
+
+CREATE PROCEDURE `SP_ConsultarEstatusCapacitacionEspecifico`(
+    IN _Id_Estatus INT -- [OBLIGATORIO] Identificador único del Estatus a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido sea un entero positivo válido.
+       Evita cargas innecesarias al motor de base de datos con peticiones basura.
+       ======================================================================================== */
+    IF _Id_Estatus IS NULL OR _Id_Estatus <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El Identificador del Estatus es inválido (Debe ser un entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE IMPLEMENTACIÓN:
+       Usamos `SELECT 1` que es más ligero que seleccionar columnas reales, ya que solo 
+       necesitamos confirmar la presencia de la llave en el índice primario.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Estatus_Capacitacion` WHERE `Id_CatEstCap` = _Id_Estatus) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Estatus de Capacitación solicitado no existe o fue eliminado físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo y puro (Raw Data) con alias semánticos.
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: IDENTIDAD DEL REGISTRO --- */
+        /* Este ID es la llave primaria inmutable. */
+        `Id_CatEstCap`   AS `Id_Estatus`,
+        
+        /* --- GRUPO B: DATOS EDITABLES --- */
+        /* El Frontend usará estos campos para llenar los inputs de texto. */
+        `Codigo`         AS `Codigo_Estatus`,
+        `Nombre`         AS `Nombre_Estatus`,
+        `Descripcion`    AS `Descripcion_Estatus`,
+        
+        /* --- GRUPO C: LÓGICA DE NEGOCIO (CORE LOGIC) --- */
+        /* [IMPORTANTE]: Este campo define el comportamiento de los Killswitches.
+           Alias: `Bandera_de_Bloqueo` 
+           Valor 0 = El proceso está vivo (Bloquea eliminación de temas/usuarios).
+           Valor 1 = El proceso terminó (Libera recursos). */
+        `Es_Final`       AS `Bandera_de_Bloqueo`,
+
+        /* --- GRUPO D: METADATOS DE CONTROL DE CICLO DE VIDA --- */
+        /* Este valor (0 o 1) indica si el estatus es utilizable actualmente en nuevos registros.
+           1 = Activo/Visible, 0 = Inactivo/Oculto (Baja Lógica). */
+        `Activo`         AS `Estatus_de_Capacitacion`,        
+        
+        /* --- GRUPO E: AUDITORÍA DE SISTEMA --- */
+        /* Fechas útiles para mostrar en el pie de página del modal de detalle o tooltip. */
+        `created_at`     AS `Fecha_Registro`,
+        `updated_at`     AS `Ultima_Modificacion`
+        
+    FROM `Cat_Estatus_Capacitacion`
+    WHERE `Id_CatEstCap` = _Id_Estatus
+    LIMIT 1; /* Buena práctica: Asegura al optimizador que se detenga tras el primer hallazgo. */
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son clave para la UX. No solo devuelven el dato pedido, sino todo el 
+   contexto necesario para que el formulario de edición se autocomplete correctamente.
+   ============================================================================================ */
+
+/* ====================================================================================================
+   PROCEDIMIENTO: SP_ConsultarModalidadCapacitacionEspecifico
+   ====================================================================================================
+   
+   ----------------------------------------------------------------------------------------------------
+   I. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   ----------------------------------------------------------------------------------------------------
+   [QUÉ ES]:
+   Es el endpoint de lectura de alta fidelidad para recuperar la "Ficha Técnica" completa de una 
+   Modalidad de Capacitación específica, identificada por su llave primaria (`Id_CatModalCap`).
+
+   [PARA QUÉ SE USA (CONTEXTO DE UI)]:
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - Cuando el administrador va a modificar una modalidad (ej: corregir el nombre "VIRTUAL" a "REMOTO"),
+        el formulario debe llenarse ("hidratarse") con los datos exactos que residen en la base de datos.
+      - Requisito Crítico: La fidelidad del dato. Los valores se entregan crudos (Raw Data) para que 
+        los inputs del HTML reflejen la realidad sin transformaciones cosméticas (ej: si el código es NULL,
+        devuelve NULL, no "S/C").
+
+   B) VISUALIZACIÓN DE DETALLE (AUDITORÍA):
+      - Permite visualizar metadatos de auditoría (`created_at`, `updated_at`) que suelen estar ocultos
+        en el listado general para mantener la limpieza visual.
+
+   ----------------------------------------------------------------------------------------------------
+   II. ARQUITECTURA DE DATOS (DIRECT TABLE ACCESS)
+   ----------------------------------------------------------------------------------------------------
+   Este procedimiento consulta directamente la tabla física `Cat_Modalidad_Capacitacion`.
+   
+   [JUSTIFICACIÓN TÉCNICA]:
+   - Desacoplamiento de Presentación: A diferencia de las Vistas (que formatean datos para lectura humana),
+     este SP prepara los datos para el consumo del sistema (Binding de Modelos en el Frontend).
+   - Performance: El acceso por Primary Key (`Id_CatModalCap`) tiene un costo computacional de O(1),
+     garantizando una respuesta instantánea (<1ms).
+
+   ----------------------------------------------------------------------------------------------------
+   III. ESTRATEGIA DE SEGURIDAD (DEFENSIVE PROGRAMMING)
+   ----------------------------------------------------------------------------------------------------
+   - Validación de Entrada: Se rechazan IDs nulos o negativos antes de tocar el disco.
+   - Fail Fast (Fallo Rápido): Se verifica la existencia del registro antes de intentar devolver datos.
+     Esto permite diferenciar claramente entre un "Error 404" (Recurso no encontrado) y un 
+     "Error 500" (Fallo de servidor).
+
+   ----------------------------------------------------------------------------------------------------
+   IV. VISIBILIDAD (SCOPE)
+   ----------------------------------------------------------------------------------------------------
+   - NO se filtra por `Activo = 1`.
+   - Razón: Una modalidad puede estar "Desactivada" (Baja Lógica). El administrador necesita poder 
+     consultarla para ver su información y decidir si la Reactiva.
+
+   ----------------------------------------------------------------------------------------------------
+   V. DICCIONARIO DE DATOS (OUTPUT CONTRACT)
+   ----------------------------------------------------------------------------------------------------
+   Retorna una única fila (Single Row) mapeada semánticamente:
+      - [Id_Modalidad]: Llave primaria.
+      - [Codigo_Modalidad]: Clave corta técnica.
+      - [Nombre_Modalidad]: Etiqueta humana.
+      - [Descripcion_Modalidad]: Contexto operativo.
+      - [Estatus_Modalidad]: Alias de negocio para `Activo` (1=Vigente, 0=Baja).
+      - [Auditoría]: Fechas de creación y modificación.
+   ==================================================================================================== */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarModalidadCapacitacionEspecifico`$$
+
+CREATE PROCEDURE `SP_ConsultarModalidadCapacitacionEspecifico`(
+    IN _Id_Modalidad INT -- [OBLIGATORIO] Identificador único de la Modalidad a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido sea un entero positivo válido.
+       Evita cargas innecesarias al motor de base de datos con peticiones basura.
+       ======================================================================================== */
+    IF _Id_Modalidad IS NULL OR _Id_Modalidad <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El Identificador de la Modalidad es inválido (Debe ser un entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE IMPLEMENTACIÓN:
+       Usamos `SELECT 1` que es más ligero que seleccionar columnas reales, ya que solo 
+       necesitamos confirmar la presencia de la llave en el índice primario.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Modalidad_Capacitacion` WHERE `Id_CatModalCap` = _Id_Modalidad) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: La Modalidad de Capacitación solicitada no existe o fue eliminada físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo y puro (Raw Data) con alias semánticos.
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: IDENTIDAD DEL REGISTRO --- */
+        /* Este ID es la llave primaria inmutable. */
+        `Id_CatModalCap`   AS `Id_Modalidad`,
+        
+        /* --- GRUPO B: DATOS EDITABLES --- */
+        /* El Frontend usará estos campos para llenar los inputs de texto. */
+        `Codigo`           AS `Codigo_Modalidad`,
+        `Nombre`           AS `Nombre_Modalidad`,
+        `Descripcion`      AS `Descripcion_Modalidad`,
+        
+        /* --- GRUPO C: METADATOS DE CONTROL DE CICLO DE VIDA --- */
+        /* Este valor (0 o 1) indica si la modalidad es utilizable actualmente en nuevos registros.
+           1 = Activo/Visible, 0 = Inactivo/Oculto (Baja Lógica). */
+        `Activo`           AS `Estatus_Modalidad`,        
+        
+        /* --- GRUPO D: AUDITORÍA DE SISTEMA --- */
+        /* Fechas útiles para mostrar en el pie de página del modal de detalle o tooltip. */
+        `created_at`       AS `Fecha_Registro`,
+        `updated_at`       AS `Ultima_Modificacion`
+        
+    FROM `Cat_Modalidad_Capacitacion`
+    WHERE `Id_CatModalCap` = _Id_Modalidad
+    LIMIT 1; /* Buena práctica: Asegura al optimizador que se detenga tras el primer hallazgo. */
+
+END$$
+
+DELIMITER ;
+
+/* ============================================================================================
+   SECCIÓN: CONSULTAS ESPECÍFICAS (PARA EDICIÓN / DETALLE)
+   ============================================================================================
+   Estas rutinas son críticas para la UX administrativa. No solo devuelven el dato pedido, sino 
+   que garantizan la integridad de lectura antes de permitir una operación de modificación.
+   ============================================================================================ */
+
+/* ====================================================================================================
+   PROCEDIMIENTO: SP_ConsultarEstatusParticipanteEspecifico
+   ====================================================================================================
+   
+   ----------------------------------------------------------------------------------------------------
+   I. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   ----------------------------------------------------------------------------------------------------
+   [QUÉ ES]:
+   Es el endpoint de lectura de alta fidelidad para recuperar la "Ficha Técnica" completa de un
+   Estatus de Participante específico, identificado por su llave primaria (`Id_CatEstPart`).
+
+   [PARA QUÉ SE USA (CONTEXTO DE UI)]:
+   A) PRECARGA DE FORMULARIO DE EDICIÓN (UPDATE):
+      - Cuando el administrador necesita corregir un estatus (ej: cambiar "REPROBADO" por "NO APTO"),
+        el formulario debe llenarse con los datos exactos que residen en la base de datos.
+      - Requisito Crítico: La fidelidad del dato. Los valores se entregan crudos (Raw Data).
+        Si la descripción es NULL, se entrega NULL, permitiendo al frontend renderizar un input vacío
+        limpio en lugar de un texto "placeholder" (como "Sin descripción") que el usuario tendría 
+        que borrar manualmente.
+
+   B) VISUALIZACIÓN DE DETALLE (AUDITORÍA):
+      - Permite visualizar metadatos de auditoría (`created_at`, `updated_at`) que certifican la
+        antigüedad del registro en el sistema.
+
+   ----------------------------------------------------------------------------------------------------
+   II. ARQUITECTURA DE DATOS (DIRECT TABLE ACCESS)
+   ----------------------------------------------------------------------------------------------------
+   Este procedimiento consulta directamente la tabla física `Cat_Estatus_Participante`.
+   
+   [JUSTIFICACIÓN TÉCNICA]:
+   - Desacoplamiento de Presentación: A diferencia de las Vistas (que formatean datos para lectura humana),
+     este SP prepara los datos para el consumo del sistema (Binding de Modelos en Angular/Vue/React).
+   - Performance: El acceso por Primary Key (`Id_CatEstPart`) tiene un costo computacional de O(1),
+     garantizando una respuesta instantánea (<1ms).
+
+   ----------------------------------------------------------------------------------------------------
+   III. ESTRATEGIA DE SEGURIDAD (DEFENSIVE PROGRAMMING)
+   ----------------------------------------------------------------------------------------------------
+   - Validación de Entrada: Se rechazan IDs nulos o negativos antes de tocar el disco.
+   - Fail Fast (Fallo Rápido): Se verifica la existencia del registro antes de intentar devolver datos.
+     Esto permite diferenciar claramente entre un "Error 404" (Recurso no encontrado) y un 
+     "Error 500" (Fallo de servidor/red).
+
+   ----------------------------------------------------------------------------------------------------
+   IV. VISIBILIDAD (SCOPE)
+   ----------------------------------------------------------------------------------------------------
+   - NO se filtra por `Activo = 1`.
+   - Razón: Un estatus puede estar "Desactivado" (Baja Lógica). El administrador necesita poder 
+     consultarlo para ver su información y decidir si lo Reactiva. Ocultarlo aquí haría imposible 
+     su gestión y recuperación.
+
+   ----------------------------------------------------------------------------------------------------
+   V. DICCIONARIO DE DATOS (OUTPUT CONTRACT)
+   ----------------------------------------------------------------------------------------------------
+   Retorna una única fila (Single Row) mapeada semánticamente:
+      - [Id_Estatus_Participante]: Llave primaria.
+      - [Codigo_Estatus]: Clave corta técnica.
+      - [Nombre_Estatus]: Etiqueta humana.
+      - [Descripcion_Estatus]: Contexto operativo.
+      - [Estatus_Activo]: Alias de negocio para `Activo` (1=Vigente, 0=Baja).
+      - [Auditoría]: Fechas de creación y modificación.
+   ==================================================================================================== */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_ConsultarEstatusParticipanteEspecifico`$$
+
+CREATE PROCEDURE `SP_ConsultarEstatusParticipanteEspecifico`(
+    IN _Id_Estatus INT -- [OBLIGATORIO] Identificador único del Estatus a consultar
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 1: VALIDACIÓN DE ENTRADA (DEFENSIVE PROGRAMMING)
+       Objetivo: Asegurar que el parámetro recibido sea un entero positivo válido.
+       Evita cargas innecesarias al motor de base de datos con peticiones basura.
+       ======================================================================================== */
+    IF _Id_Estatus IS NULL OR _Id_Estatus <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El Identificador del Estatus es inválido (Debe ser un entero positivo).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 2: VERIFICACIÓN DE EXISTENCIA (FAIL FAST STRATEGY)
+       Objetivo: Validar que el recurso realmente exista en la base de datos.
+       
+       NOTA DE IMPLEMENTACIÓN:
+       Usamos `SELECT 1` que es más ligero que seleccionar columnas reales, ya que solo 
+       necesitamos confirmar la presencia de la llave en el índice primario.
+       ======================================================================================== */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Estatus_Participante` WHERE `Id_CatEstPart` = _Id_Estatus) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Estatus de Participante solicitado no existe o fue eliminado físicamente.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CONSULTA PRINCIPAL (DATA RETRIEVAL)
+       Objetivo: Retornar el objeto de datos completo y puro (Raw Data) con alias semánticos.
+       ======================================================================================== */
+    SELECT 
+        /* --- GRUPO A: IDENTIDAD DEL REGISTRO --- */
+        /* Este ID es la llave primaria inmutable. */
+        `Id_CatEstPart`   AS `Id_Estatus_Participante`,
+        
+        /* --- GRUPO B: DATOS EDITABLES --- */
+        /* El Frontend usará estos campos para llenar los inputs de texto. */
+        `Codigo`          AS `Codigo_Estatus`,
+        `Nombre`          AS `Nombre_Estatus`,
+        `Descripcion`     AS `Descripcion_Estatus`,
+        
+        /* --- GRUPO C: METADATOS DE CONTROL DE CICLO DE VIDA --- */
+        /* Este valor (0 o 1) indica si el estatus es utilizable actualmente en nuevos registros.
+           1 = Activo/Visible, 0 = Inactivo/Oculto (Baja Lógica). */
+        `Activo`          AS `Estatus_Activo`,        
+        
+        /* --- GRUPO D: AUDITORÍA DE SISTEMA --- */
+        /* Fechas útiles para mostrar en el pie de página del modal de detalle o tooltip. */
+        `created_at`      AS `Fecha_Registro`,
+        `updated_at`      AS `Ultima_Modificacion`
+        
+    FROM `Cat_Estatus_Participante`
+    WHERE `Id_CatEstPart` = _Id_Estatus
+    LIMIT 1; /* Buena práctica: Asegura al optimizador que se detenga tras el primer hallazgo. */
+
+END$$
+
+DELIMITER ;

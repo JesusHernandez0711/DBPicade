@@ -1,0 +1,100 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+
+class CapacitacionController extends Controller
+{
+    public function store(Request $request)
+    {
+        // Validaciones (Se mantienen igual)
+        $request->validate([
+            'folio'           => 'required|string|min:5',
+            'id_gerencia'     => 'required|integer',
+            'id_tema'         => 'required|integer',
+            'id_instructor'   => 'required|integer',
+            'id_sede'         => 'required|integer',
+            'id_modalidad'    => 'required|integer',
+            'id_estatus'      => 'required|integer',
+            'fecha_inicio'    => 'required|date',
+            'fecha_fin'       => 'required|date|after_or_equal:fecha_inicio',
+            'cupo'            => 'required|integer|min:5',
+        ]);
+
+        try {
+            // NUEVO ORDEN DE PARÁMETROS (Espejo de SP)
+            // 1. Contexto | 2. Identidad | 3. Configuración | 4. Ejecución | 5. Metas
+            $resultado = DB::select('CALL SP_RegistrarCapacitacion(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+                
+                // [0] Contexto
+                Auth::id(),               
+
+                // [1] Identidad
+                $request->folio,          
+                $request->id_gerencia,    
+                $request->id_tema,        
+
+                // [2] Configuración
+                $request->id_instructor,  
+                $request->id_sede,        
+                $request->id_modalidad,   
+                $request->id_estatus,     
+
+                // [3] Ejecución (Ojo: Aquí movimos las fechas y observaciones)
+                $request->fecha_inicio,   
+                $request->fecha_fin,      
+                $request->observaciones,  
+
+                // [4] Metas (Ojo: Cupo ahora va al final)
+                $request->cupo            
+            ]);
+
+            return response()->json([
+                'message' => 'Curso creado exitosamente',
+                'data'    => $resultado[0]
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+    /**
+     * LEER EXPEDIENTE COMPLETO
+     * Consume: SP_ConsultarCapacitacionEspecifica (Nuevo Nombre)
+     */
+    public function show($idDetalle)
+    {
+        try {
+            $pdo = DB::connection()->getPdo();
+            
+            // [CORRECCIÓN]: Llamada al nombre definitivo del SP
+            $stmt = $pdo->prepare("CALL SP_ConsultarCapacitacionEspecifica(?)");
+            $stmt->execute([$idDetalle]);
+
+            // ResultSet 1: Header
+            $header = $stmt->fetch(\PDO::FETCH_ASSOC);
+            $stmt->nextRowset();
+
+            // ResultSet 2: Body (Alumnos)
+            $alumnos = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            $stmt->nextRowset();
+
+            // ResultSet 3: Footer (Historial)
+            $historial = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            return response()->json([
+                'curso'     => $header,
+                'alumnos'   => $alumnos,
+                'historial' => $historial
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    // ... (Método storeVersion igual que antes) ...
+}

@@ -1,0 +1,62 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        JERARQUÍA GEOGRÁFICA (Archivo 1)                     │
+│  Pais → Estado → Municipio → Vista_Direcciones                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              ↓ (FK Municipio)
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              CATÁLOGOS CON UBICACIÓN (Archivos 3, 4, 5)                     │
+│  Cat_Centros_Trabajo    Cat_Departamentos    Cat_Cases_Sedes                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   JERARQUÍA ORGANIZACIONAL (Archivo 2)                      │
+│  Cat_Direcciones → Cat_Subdirecciones → Cat_Gerencias_Activos               │
+│  → Vista_Organizacion                                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 CATÁLOGOS RAÍZ (Archivos 6, 7, 8, 9)                        │
+│  Cat_Regimenes_Trabajo   Cat_Puestos_Trabajo   Cat_Regiones_Trabajo         │
+│  Cat_Roles                                                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    MÓDULO DE PERSONAL (Archivo 10)                          │
+│                                                                             │
+│  Info_Personal ←────── 1:1 ──────→ Usuarios                                 │
+│   - Fk_Id_CatRegimen                 - Ficha (UNIQUE)                       │
+│   - Fk_Id_CatPuesto                  - Email (UNIQUE)                       │
+│   - Fk_Id_CatCT                      - Fk_Rol                               │
+│   - Fk_Id_CatDep                     - Foto_Perfil_Url                      │
+│   - Fk_Id_CatRegion                                                         │
+│   - Fk_Id_CatGeren                                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              CATÁLOGOS DE CAPACITACIÓN (Archivos 11-15)                     │
+│                                                                             │
+│  Cat_Tipos_Instruccion_Cap (11) → Cat_Temas_Capacitacion (12)               │
+│  Cat_Estatus_Capacitacion (13)    Cat_Modalidad_Capacitacion (14)           │
+│  Cat_Estatus_Participante (15)                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 MÓDULO DE CAPACITACIONES (Archivos 16-17)                   │
+│                                                                             │
+│  Capacitaciones (Header)                                                    │
+│    - Numero_Capacitacion (UNIQUE)                                           │
+│    - Fk_Id_CatGeren, Fk_Id_Cat_TemasCap                                     │
+│    - Asistentes_Programados (Cupo)                                          │
+│           │                                                                 │
+│           ↓ 1:N (Versiones)                                                 │
+│  DatosCapacitaciones (Detalle/Snapshot)                                     │
+│    - Fk_Id_Instructor, Fecha_Inicio, Fecha_Fin                              │
+│    - Fk_Id_CatCases_Sedes, Fk_Id_CatModalCap, Fk_Id_CatEstCap               │
+│    - AsistentesReales (Override)                                            │
+│           │                                                                 │
+│           ↓ N:M (Participantes)                                             │
+│  Capacitaciones_Participantes (Fact Table)                                  │
+│    - Fk_Id_DatosCap, Fk_Id_Usuario, Fk_Id_CatEstPart                        │
+│    - PorcentajeAsistencia, Calificacion, Justificacion                      │
+│    - Fk_Id_Usuario_Created_By, Fk_Id_Usuario_Updated_By                     │
+└─────────────────────────────────────────────────────────────────────────────┘

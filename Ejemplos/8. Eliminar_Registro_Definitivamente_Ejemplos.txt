@@ -1,0 +1,2914 @@
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarPaisFisico
+   ============================================================================================
+   OBJETIVO
+   --------
+   Eliminar físicamente un País, solo si está “limpio” (sin Estados asociados).
+
+   ¿CUÁNDO SE USA?
+   --------------
+   - Limpieza controlada de catálogo (muy raro en producción).
+   - Corrección de carga histórica errónea si no tiene dependencias.
+
+   CANDADO DE SEGURIDAD
+   --------------------
+   - Si existe al menos un Estado con Fk_Id_Pais = _Id_Pais, se bloquea el DELETE.
+   - Esto evita:
+     - Romper la jerarquía País -> Estado -> Municipio
+     - Errores de integridad referencial
+
+   VALIDACIONES
+   ------------
+   - El País debe existir.
+   - Debe no tener hijos (Estado).
+   - (Recomendado) Manejo de errores con HANDLER si luego agregas más dependencias.
+
+   RESPUESTA
+   ---------
+   - Mensaje de confirmación si se eliminó.
+============================================================================================ */
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_EliminarPaisFisico$$
+CREATE PROCEDURE SP_EliminarPaisFisico(
+    IN _Id_Pais INT
+)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1451
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: No se puede eliminar el País porque está referenciado por otros registros (FK).';
+    END;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    /* Validación */
+    IF _Id_Pais IS NULL OR _Id_Pais <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: Id_Pais inválido.';
+    END IF;
+
+    IF NOT EXISTS(SELECT 1 FROM Pais WHERE Id_Pais = _Id_Pais) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: El País no existe.';
+    END IF;
+
+    /* Candado: no debe tener estados */
+    IF EXISTS(SELECT 1 FROM Estado WHERE Fk_Id_Pais = _Id_Pais) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar el País porque tiene ESTADOS asociados. Elimine primero los estados.';
+    END IF;
+
+    START TRANSACTION;
+
+    DELETE FROM Pais
+    WHERE Id_Pais = _Id_Pais;
+
+    COMMIT;
+
+    SELECT 'País eliminado permanentemente' AS Mensaje;
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarEstadoFisico
+   ============================================================================================
+   OBJETIVO
+   --------
+   Eliminar físicamente un Estado, solo si NO tiene Municipios asociados.
+
+   ¿CUÁNDO SE USA?
+   --------------
+   - Limpieza controlada (muy raro en producción).
+   - Correcciones cuando el Estado fue creado por error y aún no tiene hijos.
+
+   CANDADO DE SEGURIDAD
+   --------------------
+   - Si existe al menos un Municipio con Fk_Id_Estado = _Id_Estado, se bloquea el DELETE.
+   - Evita romper la integridad del catálogo.
+
+   VALIDACIONES
+   ------------
+   - Estado debe existir.
+   - No debe tener Municipios asociados.
+
+   RESPUESTA
+   ---------
+   - Mensaje de confirmación si se elimina.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_EliminarEstadoFisico$$
+CREATE PROCEDURE SP_EliminarEstadoFisico(
+    IN _Id_Estado INT
+)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1451
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: No se puede eliminar el Estado porque está referenciado por otros registros (FK).';
+    END;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    /* Validación */
+    IF _Id_Estado IS NULL OR _Id_Estado <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: Id_Estado inválido.';
+    END IF;
+
+    IF NOT EXISTS(SELECT 1 FROM Estado WHERE Id_Estado = _Id_Estado) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: El Estado no existe.';
+    END IF;
+
+    /* Candado: no debe tener municipios */
+    IF EXISTS(SELECT 1 FROM Municipio WHERE Fk_Id_Estado = _Id_Estado) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar el Estado porque tiene MUNICIPIOS asociados.';
+    END IF;
+
+    START TRANSACTION;
+
+    DELETE FROM Estado
+    WHERE Id_Estado = _Id_Estado;
+
+    COMMIT;
+
+    SELECT 'Estado eliminado permanentemente' AS Mensaje;
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarMunicipio
+   ============================================================================================
+   OBJETIVO
+   --------
+   Eliminar físicamente (DELETE) un Municipio.
+
+   ¿CUÁNDO SE USA?
+   --------------
+   - Solo en administración avanzada, limpieza de datos o corrección controlada.
+   - Normalmente NO se usa en operación diaria (para eso es el borrado lógico).
+
+   RIESGOS / CANDADOS RECOMENDADOS
+   -------------------------------
+   - Si existe cualquier tabla que referencie Municipio (FK con NO ACTION),
+     el DELETE fallará con error de integridad referencial.
+   - Por seguridad, es recomendable agregar candados antes del DELETE, por ejemplo:
+     - Bloquear si hay Cat_Centros_Trabajo ligados
+     - Bloquear si hay Cat_Departamentos ligados
+     - Bloquear si hay Cat_Cases_Sedes ligados
+     (En tu esquema sí hay FKs hacia Municipio en varias tablas.)
+
+   VALIDACIONES
+   ------------
+   - Verificar que el Id exista.
+   - (Recomendado) Hacer el DELETE dentro de transacción y manejar excepciones con HANDLER,
+     para devolver mensajes controlados si hay FKs que bloquean.
+
+   RESPUESTA
+   ---------
+   - Devuelve un mensaje de confirmación si se eliminó.
+============================================================================================ */
+
+/* PROCEDIMIENTO DE ELIMINACION FISICA (BORRAR DEFINITIVAMENTE) */
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_EliminarMunicipio$$
+CREATE PROCEDURE SP_EliminarMunicipio(
+    IN _Id_Municipio INT
+)
+BEGIN
+    /* HANDLER FK: no se puede borrar si está referenciado */
+    DECLARE EXIT HANDLER FOR 1451
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: No se puede eliminar el Municipio porque está referenciado por otros registros (FK).';
+    END;
+
+    /* HANDLER general */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    /* Validación */
+    IF _Id_Municipio IS NULL OR _Id_Municipio <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: Id_Municipio inválido.';
+    END IF;
+
+    IF NOT EXISTS(SELECT 1 FROM Municipio WHERE Id_Municipio = _Id_Municipio) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'ERROR: El ID del Municipio no existe.';
+    END IF;
+
+    START TRANSACTION;
+
+    DELETE FROM Municipio
+    WHERE Id_Municipio = _Id_Municipio;
+
+    COMMIT;
+
+    SELECT 'Municipio Eliminado Permanentemente' AS Mensaje;
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarDireccionFisica
+   ============================================================================================
+   OBJETIVO
+   --------
+   Eliminar físicamente (DELETE) una Dirección de la base de datos.
+   Solo se permite si la Dirección está totalmente "limpia" (sin Subdirecciones asociadas).
+
+   ¿CUÁNDO SE USA?
+   --------------
+   - Limpieza controlada de catálogo (Administración avanzada).
+   - Corrección de errores de captura (ej: se creó una Dirección por error y no tiene uso).
+   - NO es el borrado lógico (Estatus), esto destruye el registro.
+
+   CANDADO DE SEGURIDAD (INTEGRIDAD REFERENCIAL)
+   --------------------------------------------
+   - Si existe al menos una Subdirección con Fk_Id_CatDirecc = _Id_CatDirecc, 
+     se BLOQUEA el DELETE.
+   - Esto evita:
+      - Romper la jerarquía Dirección -> Subdirección -> Gerencia.
+      - Errores de integridad referencial a nivel de base de datos (Error 1451).
+      - Dejar registros huérfanos.
+
+   VALIDACIONES
+   ------------
+   - La Dirección debe existir.
+   - No debe tener hijos (Subdirecciones).
+   - Se usa un HANDLER para capturar errores de FK por si existen otras dependencias 
+     no contempladas (ej: tablas de relación futuras).
+
+   RESPUESTA
+   ---------
+   - Mensaje de confirmación si se eliminó exitosamente.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_EliminarDireccionFisica$$
+CREATE PROCEDURE SP_EliminarDireccionFisica(
+    IN _Id_CatDirecc INT
+)
+BEGIN
+    /* ----------------------------------------------------------------------------------------
+       HANDLERS DE ERROR
+       ---------------------------------------------------------------------------------------- */
+    
+    /* Handler para Foreign Keys (Error 1451 de MySQL)
+       Atrapa el intento de borrar algo que la BD protege por constraint */
+    DECLARE EXIT HANDLER FOR 1451
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: No se puede eliminar la Dirección porque está referenciada por otros registros (FK).';
+    END;
+
+    /* Handler general para cualquier otra excepción SQL */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    /* ----------------------------------------------------------------------------------------
+       VALIDACIONES BÁSICAS
+       ---------------------------------------------------------------------------------------- */
+    
+    /* Validación de ID */
+    IF _Id_CatDirecc IS NULL OR _Id_CatDirecc <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: Id_CatDirecc inválido.';
+    END IF;
+
+    /* Validación de Existencia */
+    IF NOT EXISTS(SELECT 1 FROM Cat_Direcciones WHERE Id_CatDirecc = _Id_CatDirecc) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: La Dirección no existe.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       CANDADO DE NEGOCIO: REVISAR DEPENDENCIAS (HIJOS)
+       - Buscamos manualmente si existen Subdirecciones antes de intentar el DELETE.
+       - Esto permite dar un mensaje mucho más claro que el error genérico de MySQL.
+       ---------------------------------------------------------------------------------------- */
+    IF EXISTS(SELECT 1 FROM Cat_Subdirecciones WHERE Fk_Id_CatDirecc = _Id_CatDirecc) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar la Dirección porque tiene SUBDIRECCIONES asociadas. Elimine primero las subdirecciones.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       TRANSACCIÓN DE BORRADO
+       ---------------------------------------------------------------------------------------- */
+    START TRANSACTION;
+
+    DELETE FROM Cat_Direcciones
+    WHERE Id_CatDirecc = _Id_CatDirecc;
+
+    COMMIT;
+
+    SELECT 'Dirección eliminada permanentemente' AS Mensaje;
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarSubdireccionFisica
+   ============================================================================================
+   OBJETIVO
+   --------
+   Eliminar físicamente una Subdirección, solo si NO tiene Gerencias asociadas.
+
+   ¿CUÁNDO SE USA?
+   --------------
+   - Limpieza controlada de catálogo (muy raro en producción, solo Admin).
+   - Correcciones cuando la Subdirección fue creada por error y aún no tiene hijos.
+
+   CANDADO DE SEGURIDAD (INTEGRIDAD)
+   ---------------------------------
+   - Si existe al menos una Gerencia con Fk_Id_CatSubDirec = _Id_CatSubDirec, 
+     se bloquea el DELETE inmediatamente.
+   - Esto evita romper la integridad del catálogo y dejar gerencias huérfanas.
+
+   VALIDACIONES
+   ------------
+   - La Subdirección debe existir.
+   - No debe tener Gerencias asociadas (activas o inactivas).
+
+   RESPUESTA
+   ---------
+   - Mensaje de confirmación si se elimina correctamente.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_EliminarSubdireccionFisica$$
+CREATE PROCEDURE SP_EliminarSubdireccionFisica(
+    IN _Id_CatSubDirec INT
+)
+BEGIN
+    /* ----------------------------------------------------------------------------------------
+       HANDLERS DE ERROR
+       ---------------------------------------------------------------------------------------- */
+    
+    /* Handler para Foreign Keys (Error 1451 de MySQL) */
+    DECLARE EXIT HANDLER FOR 1451
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: No se puede eliminar la Subdirección porque está referenciada por otros registros (FK).';
+    END;
+
+    /* Handler general */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    /* ----------------------------------------------------------------------------------------
+       VALIDACIONES BÁSICAS
+       ---------------------------------------------------------------------------------------- */
+    
+    /* Validación de ID */
+    IF _Id_CatSubDirec IS NULL OR _Id_CatSubDirec <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: Id_CatSubDirec inválido.';
+    END IF;
+
+    /* Validación de Existencia */
+    IF NOT EXISTS(SELECT 1 FROM Cat_Subdirecciones WHERE Id_CatSubDirec = _Id_CatSubDirec) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: La Subdirección no existe.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       CANDADO DE NEGOCIO: REVISAR DEPENDENCIAS (HIJOS)
+       - Buscamos manualmente si existen Gerencias antes de intentar el DELETE.
+       ---------------------------------------------------------------------------------------- */
+    IF EXISTS(SELECT 1 FROM Cat_Gerencias_Activos WHERE Fk_Id_CatSubDirec = _Id_CatSubDirec) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar la Subdirección porque tiene GERENCIAS asociadas.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       TRANSACCIÓN DE BORRADO
+       ---------------------------------------------------------------------------------------- */
+    START TRANSACTION;
+
+    DELETE FROM Cat_Subdirecciones
+    WHERE Id_CatSubDirec = _Id_CatSubDirec;
+
+    COMMIT;
+
+    SELECT 'Subdirección eliminada permanentemente' AS Mensaje;
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarGerenciaFisica
+   ============================================================================================
+   OBJETIVO
+   --------
+   Eliminar físicamente (DELETE) una Gerencia de la base de datos.
+
+   ¿CUÁNDO SE USA?
+   --------------
+   - Solo en administración avanzada, limpieza de datos o corrección controlada.
+   - Normalmente NO se usa en operación diaria (para eso es el borrado lógico / Estatus).
+
+   RIESGOS / CANDADOS DE INTEGRIDAD
+   -------------------------------
+   - La tabla `Cat_Gerencias_Activos` es referenciada por tablas críticas como:
+       * Info_Personal (Empleados)
+       * Capacitaciones (Historial de cursos)
+   
+   - Si existe cualquier registro en esas tablas que apunte a esta Gerencia,
+     el DELETE fallará (protegido por Foreign Keys).
+
+   - Este SP incluye una "Pre-Validación" manual para avisar al usuario
+     EXACTAMENTE qué dependencia está bloqueando el borrado (Personal o Capacitación),
+     en lugar de solo arrojar un error SQL genérico.
+
+   VALIDACIONES
+   ------------
+   - Verificar que el Id sea válido y exista.
+   - Verificar que NO tenga Personal asignado.
+   - Verificar que NO tenga Capacitaciones ligadas.
+   - Manejo de excepciones con HANDLER para seguridad final.
+
+   RESPUESTA
+   ---------
+   - Devuelve un mensaje de confirmación si se eliminó.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS SP_EliminarGerenciaFisica$$
+CREATE PROCEDURE SP_EliminarGerenciaFisica(
+    IN _Id_CatGeren INT
+)
+BEGIN
+    /* ----------------------------------------------------------------------------------------
+       HANDLERS DE SEGURIDAD
+       ---------------------------------------------------------------------------------------- */
+    
+    /* HANDLER 1451: Atrapa el error de restricción de llave foránea (FK)
+       Es la "última línea de defensa" si se nos pasó alguna tabla hija en los IFs manuales. */
+    DECLARE EXIT HANDLER FOR 1451
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: No se puede eliminar la Gerencia porque está referenciada por otros registros (FK) en el sistema.';
+    END;
+
+    /* HANDLER General: Para cualquier otro error SQL imprevisto */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    /* ----------------------------------------------------------------------------------------
+       VALIDACIONES BÁSICAS
+       ---------------------------------------------------------------------------------------- */
+    IF _Id_CatGeren IS NULL OR _Id_CatGeren <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: Id_CatGeren inválido.';
+    END IF;
+
+    /* Validar existencia antes de intentar nada */
+    IF NOT EXISTS(SELECT 1 FROM Cat_Gerencias_Activos WHERE Id_CatGeren = _Id_CatGeren) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR: La Gerencia no existe.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       CANDADOS DE NEGOCIO (PRE-VALIDACIÓN DE DEPENDENCIAS)
+       - Buscamos dependencias específicas para dar mensajes de error útiles.
+       ---------------------------------------------------------------------------------------- */
+
+    /* 1. Verificar si hay Personal (Info_Personal) asignado a esta Gerencia */
+    IF EXISTS(SELECT 1 FROM Info_Personal WHERE Fk_Id_CatGeren = _Id_CatGeren LIMIT 1) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar la Gerencia porque tiene PERSONAL (Empleados) asignados. Elimine o reasigne al personal primero.';
+    END IF;
+
+    /* 2. Verificar si hay Capacitaciones ligadas a esta Gerencia */
+    IF EXISTS(SELECT 1 FROM Capacitaciones WHERE Fk_Id_CatGeren = _Id_CatGeren LIMIT 1) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar la Gerencia porque tiene CAPACITACIONES registradas en el historial.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       TRANSACCIÓN DE BORRADO
+       ---------------------------------------------------------------------------------------- */
+    START TRANSACTION;
+
+    DELETE FROM Cat_Gerencias_Activos
+    WHERE Id_CatGeren = _Id_CatGeren;
+
+    COMMIT;
+
+    /* ----------------------------------------------------------------------------------------
+       RESPUESTA
+       ---------------------------------------------------------------------------------------- */
+    SELECT 'Gerencia Eliminada Permanentemente' AS Mensaje;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarDepartamentoFisico
+   ============================================================================================
+   OBJETIVO
+   --------
+   Eliminar DEFINITIVAMENTE (Hard Delete) un registro de la tabla `Cat_Departamentos`.
+   
+   ADVERTENCIA DE USO (PELIGRO)
+   ----------------------------
+   Este procedimiento es destructivo e irreversible. 
+   - NO debe usarse para la operación diaria estándar (para eso existe la "Baja Lógica" con 
+     `SP_CambiarEstatusDepartamento`).
+   - SU ÚNICO CASO DE USO VÁLIDO es la depuración administrativa inmediata: 
+     Por ejemplo, corregir errores de captura humana (se creó un departamento duplicado por 
+     error y se detectó al instante, antes de que tuviera movimientos).
+
+   CANDADOS DE SEGURIDAD (INTEGRIDAD REFERENCIAL)
+   ----------------------------------------------
+   1. VALIDACIÓN DE DEPENDENCIA HISTÓRICA (El Candado de Auditoría):
+      - Regla: No basta con validar si hay empleados "Activos".
+      - Si hubo un empleado hace 5 años asignado a este departamento (y hoy está inactivo),
+        borrar el departamento rompería el historial laboral de esa persona en los reportes.
+      - Por tanto, validamos si existe CUALQUIER registro en `Info_Personal` (Activo o Inactivo).
+      - Si existe historial -> ERROR BLOQUEANTE ("ERROR CRÍTICO"). Se obliga a usar Baja Lógica.
+
+   2. LA RED DE SEGURIDAD FINAL (HANDLER 1451):
+      - MySQL tiene sus propios constraints (Foreign Keys).
+      - Si en el futuro agregas nuevas tablas que apunten a Departamentos (ej: `Inventario_Activos`)
+        y olvidas agregar la validación manual aquí, el motor de BD lanzará el error 1451.
+      - Este SP atrapa ese error técnico y devuelve un mensaje controlado y amigable 
+        ("No se puede eliminar por vínculos..."), evitando "pantallazos" de error SQL al usuario.
+
+   CONCURRENCIA
+   ------------
+   - Se usa una transacción para asegurar que la verificación de existencia y el borrado
+     ocurran en un contexto aislado. Al ser una operación atómica de DELETE, 
+     el bloqueo de fila (Row Lock) es gestionado nativamente por el motor InnoDB.
+
+   RESULTADO
+   ---------
+   - Mensaje de confirmación o error de integridad explicativo.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarDepartamentoFisico`$$
+CREATE PROCEDURE `SP_EliminarDepartamentoFisico`(
+    IN _Id_CatDep INT
+)
+BEGIN
+    /* ----------------------------------------------------------------------------------------
+       HANDLERS (MANEJO DE EXCEPCIONES TÉCNICAS)
+       ---------------------------------------------------------------------------------------- */
+    
+    /* HANDLER 1451: Foreign Key Constraint Fails
+       Este es el "Paracaídas". Si intentamos borrar y resulta que había una tabla hija 
+       (que olvidamos validar manualmente o que se agregó después al sistema) apuntando a este ID, 
+       MySQL lanzará el error 1451.
+       Aquí lo atrapamos para que la UI no reciba un error críptico de SQL. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD (FK): No es posible eliminar el Departamento porque existen registros históricos vinculados a él en otras tablas del sistema.';
+    END;
+
+    /* HANDLER GENERAL: Para errores de disco, conexión, etc. */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; 
+    END;
+
+    /* ----------------------------------------------------------------------------------------
+       1. VALIDACIONES PREVIAS
+       ---------------------------------------------------------------------------------------- */
+    IF _Id_CatDep IS NULL OR _Id_CatDep <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El ID de Departamento es inválido.';
+    END IF;
+
+    /* Verificamos si existe antes de intentar nada para dar un mensaje preciso */
+    IF NOT EXISTS(SELECT 1 FROM `Cat_Departamentos` WHERE `Id_CatDep` = _Id_CatDep) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: El Departamento que intenta eliminar no existe.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       2. CANDADO DE NEGOCIO: INFO_PERSONAL (EMPLEADOS)
+       ----------------------------------------------------------------------------------------
+       Buscamos en TODO el historial (`Info_Personal`).
+       Nota: NO filtramos por `Activo = 1`. 
+       Razón: Si borramos un departamento que tuvo empleados en el pasado (ahora inactivos),
+       dejaríamos registros huérfanos y reportes históricos rotos ("Empleado X trabajó en NULL"). */
+    
+    IF EXISTS(
+        SELECT 1 
+        FROM `Info_Personal` 
+        WHERE `Fk_Id_CatDep` = _Id_CatDep 
+        LIMIT 1
+    ) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar el Departamento. Existe historial de PERSONAL (Activo o Inactivo) vinculado a este registro. Utilice la opción "Desactivar".';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       3. EJECUCIÓN DEL BORRADO
+       ----------------------------------------------------------------------------------------
+       Si llegamos aquí, el registro pasó las validaciones manuales.
+       Procedemos a intentar el DELETE dentro de una transacción. */
+    START TRANSACTION;
+    
+    /* Intentamos borrar. Si hay alguna FK oculta no validada arriba, 
+       saltará el Handler 1451 definido al inicio y hará Rollback automático. */
+    DELETE FROM `Cat_Departamentos` 
+    WHERE `Id_CatDep` = _Id_CatDep;
+    
+    COMMIT;
+
+    /* ----------------------------------------------------------------------------------------
+       4. CONFIRMACIÓN
+       ---------------------------------------------------------------------------------------- */
+    SELECT 'El Departamento ha sido eliminado permanentemente de la base de datos.' AS Mensaje;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarCentroTrabajoFisico
+   ============================================================================================
+    OBJETIVO
+   --------
+   Eliminar físicamente (DELETE) un Centro de Trabajo de la base de datos.
+   
+   ADVERTENCIA DE USO
+   ------------------
+   - Esta es una operación DESTRUCTIVA e IRREVERSIBLE.
+   - Solo debe usarse en tareas de mantenimiento, limpieza de datos erróneos o depuración.
+   - Para la operación diaria, se recomienda usar `SP_CambiarEstatusCentroTrabajo` (Baja Lógica).
+
+   CANDADOS DE INTEGRIDAD (SEGURIDAD DE DATOS)
+   -------------------------------------------
+   1. VALIDACIÓN DE DEPENDENCIAS (HIJOS):
+      - La tabla `Cat_Centros_Trabajo` es padre de `Info_Personal` (Empleados).
+      - Antes de borrar, verificamos manualmente si existen empleados (activos o inactivos)
+        ligados a este CT.
+      - Si existen, bloqueamos la operación con un mensaje claro ("ERROR CRÍTICO").
+      - Esto es mejor que dejar que la base de datos lance un error "Foreign Key Constraint Fail"
+        que el usuario final no entendería.
+
+   2. HANDLER DE LLAVE FORÁNEA (ÚLTIMA DEFENSA):
+      - Si existieran otras tablas que referencian al CT (futuras implementaciones) y se nos
+        olvidó validarlas manualmente, el `DECLARE EXIT HANDLER FOR 1451` atrapará el error
+        de MySQL y devolverá un mensaje controlado, evitando que el sistema colapse.
+
+   VALIDACIONES
+   ------------
+   - El ID debe ser válido.
+   - El Centro de Trabajo debe existir.
+
+   RESULTADO
+   ---------
+   - Retorna un mensaje de confirmación si el borrado fue exitoso.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarCentroTrabajoFisico`$$
+CREATE PROCEDURE `SP_EliminarCentroTrabajoFisico`(
+    IN _Id_CatCT INT
+)
+BEGIN
+    /* ----------------------------------------------------------------------------------------
+       1. HANDLERS (MANEJO DE ERRORES TÉCNICOS)
+       ---------------------------------------------------------------------------------------- */
+    
+    /* HANDLER 1451: Error de Integridad Referencial (Foreign Key)
+       Este error salta si intentamos borrar algo que todavía está siendo usado por otra tabla
+       que no revisamos manualmente. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE INTEGRIDAD: No se puede eliminar el Centro de Trabajo porque está siendo utilizado en otros registros del sistema.';
+    END;
+
+    /* HANDLER GENERAL: Para cualquier otro error imprevisto (ej: fallo de disco) */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    /* ----------------------------------------------------------------------------------------
+       2. VALIDACIONES BÁSICAS
+       ---------------------------------------------------------------------------------------- */
+    IF _Id_CatCT IS NULL OR _Id_CatCT <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: Identificador de Centro de Trabajo inválido.';
+    END IF;
+
+    -- Verificar que realmente existe antes de intentar borrar
+    IF NOT EXISTS(SELECT 1 FROM `Cat_Centros_Trabajo` WHERE `Id_CatCT` = _Id_CatCT) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: El Centro de Trabajo no existe.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       3. CANDADOS DE NEGOCIO (REVISIÓN DE DEPENDENCIAS)
+       Aquí es donde protegemos la consistencia de los datos.
+       ---------------------------------------------------------------------------------------- */
+    
+    /* CANDADO: Verificar EMPLEADOS (Info_Personal)
+       Buscamos si hay al menos un empleado (activo o inactivo) asignado a este lugar. */
+    IF EXISTS(
+        SELECT 1 
+        FROM `Info_Personal` 
+        WHERE `Fk_Id_CatCT` = _Id_CatCT 
+        LIMIT 1
+    ) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar el Centro de Trabajo porque tiene HISTORIAL DE PERSONAL asignado. Utilice la opción de "Desactivar" en su lugar.';
+    END IF;
+
+    /* (Espacio reservado para futuras validaciones, ej: si hubiera tabla de Inventarios_CT) */
+
+    /* ----------------------------------------------------------------------------------------
+       4. TRANSACCIÓN DE BORRADO
+       Si llegamos aquí, el registro está limpio y seguro para borrar.
+       ---------------------------------------------------------------------------------------- */
+    START TRANSACTION;
+
+    DELETE FROM `Cat_Centros_Trabajo` 
+    WHERE `Id_CatCT` = _Id_CatCT;
+
+    COMMIT;
+
+    /* ----------------------------------------------------------------------------------------
+       5. RESPUESTA
+       ---------------------------------------------------------------------------------------- */
+    SELECT 'Centro de Trabajo eliminado permanentemente de la base de datos.' AS Mensaje;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarSedeFisica
+   ============================================================================================
+   AUTOR: Tu Equipo de Desarrollo / Gemini
+   FECHA: 2026
+
+   1. OBJETIVO DE NEGOCIO
+   ----------------------
+   Eliminar DEFINITIVAMENTE (Hard Delete) un registro del catálogo de Sedes (`Cat_Cases_Sedes`).
+   Esta acción retira físicamente la fila de la base de datos, liberando espacio y referencias.
+
+   2. ALCANCE Y RIESGOS (ADVERTENCIA)
+   ----------------------------------
+   - Tipo de Operación: DESTRUCTIVA e IRREVERSIBLE.
+   - Caso de Uso: Mantenimiento correctivo (ej: eliminar un registro duplicado creado por error
+     hoy mismo) o depuración administrativa.
+   - Restricción: NO debe usarse para la operación diaria. Para retirar una Sede del uso común
+     sin perder su historial, se debe usar `SP_CambiarEstatusSede` (Baja Lógica).
+
+   3. ARQUITECTURA DE SEGURIDAD (INTEGRIDAD REFERENCIAL)
+   -----------------------------------------------------
+   Para evitar la corrupción de la base de datos ("Registros Huérfanos"), implementamos una
+   defensa en capas:
+
+   CAPA A: VALIDACIÓN MANUAL DE DEPENDENCIAS (Mejora de UX)
+   - Antes de intentar borrar, el SP consulta proactivamente las tablas hijas críticas
+     (como `Capacitaciones` o `Cursos`).
+   - ¿Por qué? MySQL por defecto lanza un error genérico (Error 1451) si falla una FK.
+     Validando manualmente, podemos devolver un mensaje específico: "No se puede borrar porque
+     hay cursos programados", guiando al usuario a la solución correcta.
+
+   CAPA B: HANDLER DE LLAVE FORÁNEA (Red de Seguridad)
+   - Si se agregan nuevas tablas al sistema en el futuro (ej: `Inventario_Mobiliario`) y
+     olvidamos actualizar este SP, el intento de borrado fallará a nivel de Motor de BD.
+   - Implementamos un `DECLARE EXIT HANDLER FOR 1451` para atrapar ese error crítico,
+     hacer ROLLBACK y devolver un mensaje controlado en lugar de una excepción de sistema.
+
+   4. CONCURRENCIA Y ACID
+   ----------------------
+   - Atomicidad: Todo el proceso ocurre dentro de una `TRANSACCIÓN`. O se borra todo, o nada.
+   - Bloqueo: Al ejecutar el `DELETE`, el motor InnoDB aplica automáticamente un "Row Lock"
+     (Bloqueo de Fila) exclusivo, impidiendo que otros procesos lean o escriban en esa Sede
+     hasta que confirmemos (COMMIT).
+
+   RESULTADO
+   ---------
+   - Mensaje: Confirmación de éxito o explicación detallada del bloqueo.
+============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarSedeFisica`$$
+CREATE PROCEDURE `SP_EliminarSedeFisica`(
+    IN _Id_Sede INT  -- Identificador único de la Sede a eliminar
+)
+BEGIN
+    /* ========================================================================================
+       SECCIÓN 1: HANDLERS (MANEJO ROBUSTO DE EXCEPCIONES)
+       ======================================================================================== */
+    
+    /* 1.1 HANDLER DE INTEGRIDAD REFERENCIAL (Error 1451)
+       Objetivo: Actuar como "paracaídas" de seguridad.
+       Escenario: Intentamos borrar la Sede, pero existe una tabla hija (desconocida o nueva)
+       que tiene un registro apuntando a este ID. El motor de BD bloquea el borrado.
+       Acción: Hacemos Rollback y traducimos el error técnico a un mensaje de negocio. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD (FK): El sistema ha impedido el borrado porque existen registros históricos (probablemente Cursos, Inventarios o Bitácoras) vinculados a esta Sede. Utilice la opción "Desactivar" para mantener el historial.';
+    END;
+
+    /* 1.2 HANDLER GENÉRICO (SQLEXCEPTION)
+       Objetivo: Capturar errores de infraestructura.
+       Escenario: Fallo de disco, pérdida de conexión, timeout de transacción.
+       Acción: Limpieza inmediata (Rollback) y re-lanzamiento del error para logs. */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; 
+    END;
+
+    /* ========================================================================================
+       SECCIÓN 2: VALIDACIONES PREVIAS (DEFENSIVE PROGRAMMING)
+       ======================================================================================== */
+    
+    /* 2.1 Validación de Parámetro
+       Evitamos operaciones si el ID es nulo o negativo. */
+    IF _Id_Sede IS NULL OR _Id_Sede <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE SISTEMA: El identificador de la Sede es inválido.';
+    END IF;
+
+    /* 2.2 Validación de Existencia (Fail Fast)
+       Verificamos si el registro existe antes de verificar dependencias.
+       Esto permite dar un mensaje de error preciso ("No existe") en lugar de uno confuso. */
+    IF NOT EXISTS(SELECT 1 FROM `Cat_Cases_Sedes` WHERE `Id_CatCases_Sedes` = _Id_Sede) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: La Sede que intenta eliminar no existe en el catálogo.';
+    END IF;
+
+    /* ========================================================================================
+       SECCIÓN 3: CANDADOS DE NEGOCIO (PRE-VALIDACIÓN DE DEPENDENCIAS)
+       ========================================================================================
+       Aquí implementamos la lógica de negocio para proteger la coherencia de los datos.
+       Buscamos explícitamente en las tablas hijas conocidas. */
+    
+    /* [NOTA DE IMPLEMENTACIÓN FUTURA]
+       Cuando se cree el módulo de "Programación de Cursos" o "Capacitaciones", 
+       se debe descomentar y ajustar el siguiente bloque. 
+       
+       Objetivo: Si una Sede tiene Cursos (activos o pasados), NO se puede borrar, 
+       porque los reportes de esos cursos fallarían al intentar mostrar dónde se impartieron.
+    */
+    
+    /* IF EXISTS(SELECT 1 FROM `Capacitaciones` WHERE `Fk_Id_Sede` = _Id_Sede LIMIT 1) THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'ERROR CRÍTICO: No se puede eliminar la Sede porque tiene historial de CAPACITACIONES asociadas. El borrado rompería los reportes históricos.';
+    END IF;
+    */
+
+    /* ========================================================================================
+       SECCIÓN 4: EJECUCIÓN DEL BORRADO (ZONA CRÍTICA)
+       ========================================================================================
+       Si el flujo llega a este punto, significa que:
+       1. El registro existe.
+       2. No tiene dependencias bloqueantes conocidas.
+       Es seguro proceder con la destrucción del dato. */
+    
+    START TRANSACTION;
+    
+    /* Ejecutamos el DELETE.
+       - En este momento, InnoDB adquiere un bloqueo exclusivo (X-Lock) sobre la fila.
+       - Si hubiese una FK oculta no detectada arriba, aquí saltará el Handler 1451. */
+    DELETE FROM `Cat_Cases_Sedes` 
+    WHERE `Id_CatCases_Sedes` = _Id_Sede;
+    
+    /* Confirmamos los cambios de forma permanente */
+    COMMIT;
+
+    /* ========================================================================================
+       SECCIÓN 5: RESPUESTA
+       ======================================================================================== */
+    SELECT 'La Sede ha sido eliminada permanentemente de la base de datos.' AS Mensaje;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarRegimenFisico
+   ============================================================================================
+   AUTOR: Arquitectura de Datos / Gemini
+   FECHA: 2026
+
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Ejecutar la eliminación DEFINITIVA, FÍSICA e IRREVERSIBLE de un registro en el catálogo
+   de "Regímenes de Contratación" (`Cat_Regimenes_Trabajo`).
+
+   CONTEXTO DE USO Y ADVERTENCIAS:
+   - Naturaleza: Operación Destructiva (`DELETE`).
+   - Caso de Uso Permitido: Únicamente para tareas de depuración administrativa inmediata
+     (ej: "Acabo de crear por error el régimen 'Pru3ba' y quiero borrarlo ya").
+   - Restricción: NO debe usarse para la gestión operativa histórica. Si un régimen dejó de
+     usarse (ej: "Planta Extinta"), se debe usar el procedimiento de Baja Lógica (Desactivar)
+     para no romper los expedientes de los empleados que tuvieron ese régimen.
+
+   2. ESTRATEGIA DE INTEGRIDAD REFERENCIAL (DEFENSA EN CAPAS)
+   ----------------------------------------------------------
+   Para garantizar que la base de datos nunca quede con "Registros Huérfanos" (empleados apuntando
+   a un régimen que ya no existe), implementamos dos niveles de seguridad:
+
+   CAPA A: VALIDACIÓN DE NEGOCIO PROACTIVA (Mejora de UX)
+   - Antes de intentar borrar, el SP escanea explícitamente la tabla hija `Info_Personal`.
+   - Criterio Estricto: Si existe CUALQUIER historial (sea un empleado activo o uno dado de baja
+     hace 10 años) vinculado a este régimen, la operación se aborta.
+   - Beneficio: Permite devolver un mensaje de error semántico ("No se puede borrar porque hay
+     historial") en lugar de un error técnico de SQL.
+
+   CAPA B: VALIDACIÓN DE MOTOR REACTIVA (Database Constraint - Safety Net)
+   - Si existiera una tabla oculta o futura que olvidamos validar manualmente, el motor InnoDB
+     bloqueará el `DELETE` disparando el error `1451` (Foreign Key Constraint Fails).
+   - El SP captura este error mediante un `HANDLER`, hace Rollback y entrega un mensaje controlado,
+     evitando que el sistema colapse o muestre pantallas de error crípticas.
+
+   3. ATOMICIDAD Y CONCURRENCIA
+   ----------------------------
+   - La operación se envuelve en una transacción.
+   - El motor aplica un bloqueo exclusivo (X-Lock) sobre la fila durante el borrado, asegurando
+     que nadie más pueda leer o vincular este régimen mientras se destruye.
+
+   RESULTADO (OUTPUT)
+   ------------------
+   Retorna un dataset informativo:
+     - Mensaje: Confirmación de éxito.
+     - Accion: 'ELIMINADA'.
+     - Id_Regimen: El ID del recurso purgado.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarRegimenFisico`$$
+CREATE PROCEDURE `SP_EliminarRegimenFisico`(
+    /* -----------------------------------------------------------------
+       PARÁMETROS DE ENTRADA
+       ----------------------------------------------------------------- */
+    IN _Id_Regimen INT -- Identificador único del registro a destruir
+)
+BEGIN
+    /* ========================================================================================
+       BLOQUE 0: VARIABLES DE DIAGNÓSTICO
+       ======================================================================================== */
+    /* Variable para almacenar el resultado de la búsqueda de dependencias */
+    DECLARE v_Dependencias INT DEFAULT NULL;
+
+    /* ========================================================================================
+       BLOQUE 1: HANDLERS (MANEJO ROBUSTO DE EXCEPCIONES)
+       ======================================================================================== */
+    
+    /* 1.1 HANDLER DE INTEGRIDAD REFERENCIAL (Error 1451)
+       Objetivo: Actuar como "paracaídas" o red de seguridad final.
+       Escenario: Intentamos borrar, pero el motor de BD detecta que hay una FK activa apuntando
+       a este registro desde otra tabla (quizás una que no validamos en el Bloque 3).
+       Acción: Revertir todo y avisar al usuario que el sistema protegió el dato. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; 
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD (SISTEMA): El registro está blindado por la base de datos porque existen referencias en otras tablas históricas no depuradas.'; 
+    END;
+
+    /* 1.2 HANDLER GENÉRICO (SQLEXCEPTION)
+       Objetivo: Capturar fallos de infraestructura (Disco, Conexión). */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; 
+    END;
+
+    /* ========================================================================================
+       BLOQUE 2: VALIDACIONES PREVIAS (FAIL FAST)
+       ======================================================================================== */
+    
+    /* 2.1 Validación de Input */
+    IF _Id_Regimen IS NULL OR _Id_Regimen <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA: Identificador inválido.';
+    END IF;
+
+    /* 2.2 Validación de Existencia
+       Verificamos si el registro existe antes de verificar dependencias. */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Regimenes_Trabajo` WHERE `Id_CatRegimen` = _Id_Regimen) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO: El Régimen que intenta eliminar no existe.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CANDADO DE NEGOCIO (VALIDACIÓN PROACTIVA DE DEPENDENCIAS)
+       ======================================================================================== */
+    
+    /* OBJETIVO: Proteger el Historial Laboral.
+       Buscamos en la tabla `Info_Personal`.
+       CRÍTICO: NO filtramos por `Activo = 1`. 
+       Razón: Si un empleado trabajó bajo el régimen "Planta 1990" y hoy está dado de baja (Inactivo),
+       ese historial sigue siendo sagrado. Si borramos el régimen, el expediente de ese empleado
+       se corrompe (FK apunta a NULL o error). Por eso validamos TODO el universo. */
+    
+    SELECT 1 INTO v_Dependencias
+    FROM `Info_Personal`
+    WHERE `Fk_Id_CatRegimen` = _Id_Regimen
+    LIMIT 1;
+
+    /* SI ENCONTRAMOS AL MENOS UN REGISTRO ASOCIADO... */
+    IF v_Dependencias IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE NEGOCIO: No es posible eliminar este Régimen porque existen expedientes de PERSONAL (Activos o Históricos) asociados a él. La eliminación física rompería el historial laboral. Utilice la opción "Desactivar" en su lugar.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 4: EJECUCIÓN DESTRUCTIVA (ZONA CRÍTICA)
+       ======================================================================================== */
+    START TRANSACTION;
+
+    /* Ejecución del Borrado Físico.
+       En este punto, el motor adquiere un bloqueo exclusivo sobre la fila. */
+    DELETE FROM `Cat_Regimenes_Trabajo` 
+    WHERE `Id_CatRegimen` = _Id_Regimen;
+
+    /* Si llegamos aquí sin que salten los Handlers (especialmente el 1451),
+       significa que el registro estaba limpio y fue destruido correctamente. */
+    COMMIT;
+
+    /* ========================================================================================
+       BLOQUE 5: CONFIRMACIÓN
+       ======================================================================================== */
+    SELECT 
+        'Registro eliminado permanentemente de la base de datos.' AS Mensaje, 
+        'ELIMINADA' AS Accion,
+        _Id_Regimen AS Id_Regimen;
+
+END$$
+
+DELIMITER ;
+
+/* ====================================================================================================
+   PROCEDIMIENTO: SP_EliminarRegionFisica
+   ====================================================================================================
+1. VISIÓN GENERAL Y OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   ----------------------------------------------------------------------------------------------------
+   Este procedimiento implementa la operación de ELIMINACIÓN FÍSICA (Hard Delete) sobre la entidad
+   "Región Operativa" (`Cat_Regiones_Trabajo`).
+   
+   A diferencia de la "Baja Lógica" (que solo oculta el registro), este proceso DESTRUYE la información
+   de manera permanente. Su uso está estrictamente limitado a tareas de:
+     A) Saneamiento de Datos (Data Cleansing): Eliminación de registros creados por error humano
+        inmediatamente después de su creación (antes de tener uso).
+     B) Depuración Administrativa: Mantenimiento técnico de catálogos corruptos.
+
+   2. ARQUITECTURA DE INTEGRIDAD REFERENCIAL (ESTRATEGIA "DEFENSA EN PROFUNDIDAD")
+   ----------------------------------------------------------------------------------------------------
+   Para prevenir la corrupción silenciosa de la base de datos (Orphaned Records), este SP implementa
+   tres anillos de seguridad antes de permitir la destrucción:
+
+     ANILLO 1: VALIDACIÓN DE EXISTENCIA (Fail Fast)
+     - Rechaza inmediatamente IDs nulos o inexistentes para evitar bloqueos innecesarios.
+
+     ANILLO 2: VALIDACIÓN PROACTIVA DE NEGOCIO (Logic Guard)
+     - Consulta explícita a la tabla `Info_Personal`.
+     - REGLA CRÍTICA DE AUDITORÍA: La validación busca CUALQUIER historial. No importa si el
+       empleado está "Activo" o "Inactivo". Si un empleado *alguna vez* perteneció a esta región,
+       el registro se vuelve INBORRABLE para preservar la trazabilidad histórica de los reportes.
+     - ACCIÓN: Devuelve un error 409 (Conflict) legible para el humano.
+
+     ANILLO 3: VALIDACIÓN REACTIVA DE MOTOR (Database Constraint - Last Resort)
+     - Se apoya en las Foreign Keys (FK) del motor InnoDB.
+     - Si existe una relación oculta (ej: una tabla de "Auditoría_Regiones" que olvidamos revisar),
+       el motor bloqueará el DELETE lanzando el error 1451.
+     - ACCIÓN: Un HANDLER captura este error y hace un Rollback seguro.
+
+   3. MODELO DE CONCURRENCIA Y BLOQUEO (ACID COMPLIANCE)
+   ----------------------------------------------------------------------------------------------------
+   - AISLAMIENTO: Serializable (vía Locking).
+   - MECÁNICA: Al ejecutar el comando `DELETE`, el motor InnoDB adquiere automáticamente un
+     BLOQUEO EXCLUSIVO DE FILA (X-LOCK).
+   - EFECTO: Nadie puede leer, editar o asignar empleados a esta Región durante los milisegundos
+     que dura la transacción de borrado.
+
+   4. CONTRATO DE SALIDA (OUTPUT CONTRACT)
+   ----------------------------------------------------------------------------------------------------
+   Retorna un resultset de una sola fila (Single Row) indicando el éxito de la operación.
+   En caso de fallo, se lanzan señales SQLSTATE controladas (400, 404, 409).
+   ==================================================================================================== */
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarRegionFisica`$$
+
+CREATE PROCEDURE `SP_EliminarRegionFisica`(
+    /* PARÁMETRO DE ENTRADA */
+    IN _Id_Region INT -- PK: Identificador único de la Región a purgar.
+)
+THIS_PROC: BEGIN
+    
+    /* ================================================================================================
+       BLOQUE 0: VARIABLES DE DIAGNÓSTICO
+       Propósito: Definición de contenedores locales para almacenar el estado de las validaciones.
+       ================================================================================================ */
+    -- Semáforo para detectar si existen hijos/dependencias en tablas relacionadas.
+    DECLARE v_Dependencias INT DEFAULT NULL;
+
+    /* ================================================================================================
+       BLOQUE 1: DEFINICIÓN DE HANDLERS (MANEJO DE EXCEPCIONES TÉCNICAS)
+       Propósito: Asegurar que el procedimiento nunca termine abruptamente sin limpiar la transacción.
+       ================================================================================================ */
+    
+    /* ------------------------------------------------------------------------------------------------
+       HANDLER 1.1: PROTECCIÓN DE INTEGRIDAD REFERENCIAL (Error MySQL 1451)
+       Contexto: Este error ocurre cuando intentamos borrar un padre que tiene hijos (FK) activos.
+       Estrategia: "Graceful Failure". En lugar de mostrar un error SQL críptico al usuario,
+       revertimos la transacción y mostramos un mensaje de negocio explicativo.
+       ------------------------------------------------------------------------------------------------ */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; 
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD [1451]: El sistema de base de datos impidió el borrado. Existen registros en otras tablas (Gerencias, Históricos o Auditoría) vinculados a esta Región que no fueron detectados por la validación previa.'; 
+    END;
+
+    /* ------------------------------------------------------------------------------------------------
+       HANDLER 1.2: EXCEPCIÓN GENERAL (SQLEXCEPTION)
+       Contexto: Fallos de disco, pérdida de conexión de red, corrupción de índices, timeout.
+       Estrategia: Abortar operación (Rollback) y relanzar el error para logs del sistema.
+       ------------------------------------------------------------------------------------------------ */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; 
+    END;
+
+    /* ================================================================================================
+       BLOQUE 2: VALIDACIONES PRELIMINARES (FAIL FAST PATTERN)
+       Propósito: Validar la calidad de los datos de entrada antes de consumir recursos de procesamiento.
+       ================================================================================================ */
+    
+    /* 2.1 Validación de Sintaxis: El ID debe ser un entero positivo válido. */
+    IF _Id_Region IS NULL OR _Id_Region <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El parámetro ID de Región es inválido o nulo.';
+    END IF;
+
+    /* 2.2 Validación de Existencia: Verificación contra el Catálogo Maestro.
+       Nota: Hacemos esto antes de buscar dependencias para diferenciar un error "No encontrado" (404)
+       de un error "No se puede borrar" (409). */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Regiones_Trabajo` WHERE `Id_CatRegion` = _Id_Region) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: La Región que intenta eliminar no existe en la base de datos.';
+    END IF;
+
+    /* ================================================================================================
+       BLOQUE 3: CANDADO DE NEGOCIO (LOGIC LOCK)
+       Propósito: Aplicar las reglas de dominio específicas para la destrucción de información.
+       ================================================================================================ */
+    
+    /* ------------------------------------------------------------------------------------------------
+       PASO 3.1: INSPECCIÓN DE HISTORIAL LABORAL (`Info_Personal`)
+       
+       Objetivo Técnico:
+       Escanear la tabla transaccional de empleados para ver si la Región _Id_Region
+       ha sido utilizada alguna vez como llave foránea (`Fk_Id_CatRegion`).
+       
+       Justificación de Negocio (POR QUÉ NO FILTRAMOS POR "ACTIVO"):
+       Un empleado puede estar dado de baja (Inactivo) hoy, pero trabajó en esta Región hace 3 años.
+       Si borramos la Región físicamente, el registro histórico del empleado quedaría apuntando a NULL
+       o generaría inconsistencia en los reportes de antigüedad y trayectoria.
+       Por lo tanto, la mera existencia de un registro (activo o inactivo) es motivo de BLOQUEO.
+       ------------------------------------------------------------------------------------------------ */
+    SELECT 1 INTO v_Dependencias
+    FROM `Info_Personal`
+    WHERE `Fk_Id_CatRegion` = _Id_Region
+    LIMIT 1; -- Optimización: Con encontrar uno solo es suficiente para detener el proceso.
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 3.2: EVALUACIÓN DEL BLOQUEO
+       Si la variable v_Dependencias dejó de ser NULL, significa que hay historial.
+       ------------------------------------------------------------------------------------------------ */
+    IF v_Dependencias IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'CONFLICTO DE NEGOCIO [409]: Operación denegada. No es posible eliminar esta Región porque existen expedientes de PERSONAL (Activos o Históricos) asociados a ella. La eliminación física rompería la integridad histórica. Utilice la opción "Desactivar/Baja Lógica".';
+    END IF;
+
+    /* ================================================================================================
+       BLOQUE 4: TRANSACCIÓN DE BORRADO (ZONA CRÍTICA)
+       Propósito: Ejecutar el cambio de estado persistente de manera atómica.
+       ================================================================================================ */
+    START TRANSACTION;
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 4.1: EJECUCIÓN DEL DELETE
+       Acción: El motor intenta eliminar la fila física.
+       
+       Implicación de Motor (InnoDB):
+       1. Se verifica nuevamente la restricción de llave foránea (Constraint Check).
+       2. Si pasa, se adquiere un LOCK EXCLUSIVO (X-LOCK) en el índice primario.
+       3. Se escribe el cambio en el Buffer Pool y en el Redo Log.
+       
+       Red de Seguridad:
+       Si alguna tabla (no validada en el Bloque 3) tiene una referencia, aquí saltará el HANDLER 1451.
+       ------------------------------------------------------------------------------------------------ */
+    DELETE FROM `Cat_Regiones_Trabajo` 
+    WHERE `Id_CatRegion` = _Id_Region;
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 4.2: CONFIRMACIÓN (COMMIT)
+       Acción: Se finaliza la transacción.
+       Efecto: El bloqueo exclusivo se libera. El espacio en disco se marca como reutilizable.
+       ------------------------------------------------------------------------------------------------ */
+    COMMIT;
+
+    /* ================================================================================================
+       BLOQUE 5: RESPUESTA AL CLIENTE (RESPONSE MAPPING)
+       Propósito: Informar al Frontend/API que la operación concluyó exitosamente.
+       ================================================================================================ */
+    SELECT 
+        'ÉXITO: La Región ha sido eliminada permanentemente del sistema.' AS Mensaje, 
+        'HARD_DELETE' AS Tipo_Operacion,
+        _Id_Region AS Id_Recurso_Eliminado,
+        NOW() AS Fecha_Ejecucion;
+
+END$$
+
+DELIMITER ;
+
+/* ====================================================================================================
+   PROCEDIMIENTO: SP_EliminarPuestoFisico
+   ====================================================================================================
+   
+   1. VISIÓN GENERAL Y OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   ----------------------------------------------------------------------------------------------------
+   Este procedimiento implementa la operación de ELIMINACIÓN FÍSICA (Hard Delete) sobre la entidad
+   "Puesto de Trabajo" (`Cat_Puestos_Trabajo`).
+   
+   A diferencia de la "Baja Lógica" (que solo oculta el registro), este proceso DESTRUYE la información
+   de manera permanente. Su uso está estrictamente limitado a tareas de:
+     A) Saneamiento de Datos (Data Cleansing): Eliminación de registros creados por error humano
+        inmediatamente después de su creación (antes de tener uso).
+     B) Depuración Administrativa: Mantenimiento técnico de catálogos corruptos.
+
+   2. ARQUITECTURA DE INTEGRIDAD REFERENCIAL (ESTRATEGIA "DEFENSA EN PROFUNDIDAD")
+   ----------------------------------------------------------------------------------------------------
+   Para prevenir la corrupción silenciosa de la base de datos (Orphaned Records), este SP implementa
+   tres anillos de seguridad antes de permitir la destrucción:
+
+     ANILLO 1: VALIDACIÓN DE EXISTENCIA (Fail Fast)
+     - Rechaza inmediatamente IDs nulos o inexistentes para evitar bloqueos innecesarios.
+
+     ANILLO 2: VALIDACIÓN PROACTIVA DE NEGOCIO (Logic Guard)
+     - Consulta explícita a la tabla `Info_Personal`.
+     - REGLA CRÍTICA DE AUDITORÍA: La validación busca CUALQUIER historial. No importa si el
+       empleado está "Activo" o "Inactivo". Si un empleado *alguna vez* ocupó este puesto,
+       el registro se vuelve INBORRABLE para preservar la trazabilidad histórica de los expedientes.
+     - ACCIÓN: Devuelve un error 409 (Conflict) legible para el humano.
+
+     ANILLO 3: VALIDACIÓN REACTIVA DE MOTOR (Database Constraint - Last Resort)
+     - Se apoya en las Foreign Keys (FK) del motor InnoDB.
+     - Si existe una relación oculta (ej: una tabla de "Vacantes" o "Perfiles" que olvidamos revisar),
+       el motor bloqueará el DELETE lanzando el error 1451.
+     - ACCIÓN: Un HANDLER captura este error y hace un Rollback seguro.
+
+   3. MODELO DE CONCURRENCIA Y BLOQUEO (ACID COMPLIANCE)
+   ----------------------------------------------------------------------------------------------------
+   - AISLAMIENTO: Serializable (vía Locking).
+   - MECÁNICA: Al ejecutar el comando `DELETE`, el motor InnoDB adquiere automáticamente un
+     BLOQUEO EXCLUSIVO DE FILA (X-LOCK).
+   - EFECTO: Nadie puede leer, editar o asignar este puesto a un empleado durante los milisegundos
+     que dura la transacción de borrado.
+
+   4. CONTRATO DE SALIDA (OUTPUT CONTRACT)
+   ----------------------------------------------------------------------------------------------------
+   Retorna un resultset de una sola fila (Single Row) indicando el éxito de la operación.
+   En caso de fallo, se lanzan señales SQLSTATE controladas (400, 404, 409).
+   ==================================================================================================== */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarPuestoFisico`$$
+
+CREATE PROCEDURE `SP_EliminarPuestoFisico`(
+    /* PARÁMETRO DE ENTRADA */
+    IN _Id_Puesto INT -- PK: Identificador único del Puesto a purgar.
+)
+THIS_PROC: BEGIN
+    
+    /* ================================================================================================
+       BLOQUE 0: VARIABLES DE DIAGNÓSTICO
+       Propósito: Definición de contenedores locales para almacenar el estado de las validaciones.
+       ================================================================================================ */
+    -- Semáforo para detectar si existen hijos/dependencias en tablas relacionadas.
+    DECLARE v_Dependencias INT DEFAULT NULL;
+
+    /* ================================================================================================
+       BLOQUE 1: DEFINICIÓN DE HANDLERS (MANEJO DE EXCEPCIONES TÉCNICAS)
+       Propósito: Asegurar que el procedimiento nunca termine abruptamente sin limpiar la transacción.
+       ================================================================================================ */
+    
+    /* ------------------------------------------------------------------------------------------------
+       HANDLER 1.1: PROTECCIÓN DE INTEGRIDAD REFERENCIAL (Error MySQL 1451)
+       Contexto: Este error ocurre cuando intentamos borrar un padre que tiene hijos (FK) activos.
+       Estrategia: "Graceful Failure". En lugar de mostrar un error SQL críptico al usuario,
+       revertimos la transacción y mostramos un mensaje de negocio explicativo.
+       ------------------------------------------------------------------------------------------------ */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; 
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD [1451]: El sistema de base de datos impidió el borrado. Existen registros en otras tablas (posiblemente Personal o Historial) vinculados a este Puesto que no fueron detectados por la validación previa.'; 
+    END;
+
+    /* ------------------------------------------------------------------------------------------------
+       HANDLER 1.2: EXCEPCIÓN GENERAL (SQLEXCEPTION)
+       Contexto: Fallos de disco, pérdida de conexión de red, corrupción de índices, timeout.
+       Estrategia: Abortar operación (Rollback) y relanzar el error para logs del sistema.
+       ------------------------------------------------------------------------------------------------ */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; 
+    END;
+
+    /* ================================================================================================
+       BLOQUE 2: VALIDACIONES PRELIMINARES (FAIL FAST PATTERN)
+       Propósito: Validar la calidad de los datos de entrada antes de consumir recursos de procesamiento.
+       ================================================================================================ */
+    
+    /* 2.1 Validación de Sintaxis: El ID debe ser un entero positivo válido. */
+    IF _Id_Puesto IS NULL OR _Id_Puesto <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El parámetro ID de Puesto es inválido o nulo.';
+    END IF;
+
+    /* 2.2 Validación de Existencia: Verificación contra el Catálogo Maestro.
+       Nota: Hacemos esto antes de buscar dependencias para diferenciar un error "No encontrado" (404)
+       de un error "No se puede borrar" (409). */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Puestos_Trabajo` WHERE `Id_CatPuesto` = _Id_Puesto) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Puesto que intenta eliminar no existe en la base de datos.';
+    END IF;
+
+    /* ================================================================================================
+       BLOQUE 3: CANDADO DE NEGOCIO (LOGIC LOCK)
+       Propósito: Aplicar las reglas de dominio específicas para la destrucción de información.
+       ================================================================================================ */
+    
+    /* ------------------------------------------------------------------------------------------------
+       PASO 3.1: INSPECCIÓN DE HISTORIAL LABORAL (`Info_Personal`)
+       
+       Objetivo Técnico:
+       Escanear la tabla transaccional de empleados para ver si el Puesto _Id_Puesto
+       ha sido utilizado alguna vez como llave foránea (`Fk_Id_CatPuesto`).
+       
+       Justificación de Negocio (POR QUÉ NO FILTRAMOS POR "ACTIVO"):
+       Un empleado puede estar dado de baja (Inactivo) hoy, pero ocupó este puesto hace 3 años.
+       Si borramos el Puesto físicamente, el registro histórico del empleado quedaría apuntando a NULL
+       o generaría inconsistencia en los reportes de "Trayectoria Laboral".
+       Por lo tanto, la mera existencia de un registro (activo o inactivo) es motivo de BLOQUEO.
+       ------------------------------------------------------------------------------------------------ */
+    SELECT 1 INTO v_Dependencias
+    FROM `Info_Personal`
+    WHERE `Fk_Id_CatPuesto` = _Id_Puesto
+    LIMIT 1; -- Optimización: Con encontrar uno solo es suficiente para detener el proceso.
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 3.2: EVALUACIÓN DEL BLOQUEO
+       Si la variable v_Dependencias dejó de ser NULL, significa que hay historial.
+       ------------------------------------------------------------------------------------------------ */
+    IF v_Dependencias IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'CONFLICTO DE NEGOCIO [409]: Operación denegada. No es posible eliminar este Puesto porque existen expedientes de PERSONAL (Activos o Históricos) asociados a él. La eliminación física rompería la integridad histórica. Utilice la opción "Desactivar/Baja Lógica".';
+    END IF;
+
+    /* ================================================================================================
+       BLOQUE 4: TRANSACCIÓN DE BORRADO (ZONA CRÍTICA)
+       Propósito: Ejecutar el cambio de estado persistente de manera atómica.
+       ================================================================================================ */
+    START TRANSACTION;
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 4.1: EJECUCIÓN DEL DELETE
+       Acción: El motor intenta eliminar la fila física.
+       
+       Implicación de Motor (InnoDB):
+       1. Se verifica nuevamente la restricción de llave foránea (Constraint Check).
+       2. Si pasa, se adquiere un LOCK EXCLUSIVO (X-LOCK) en el índice primario.
+       3. Se escribe el cambio en el Buffer Pool y en el Redo Log.
+       
+       Red de Seguridad:
+       Si alguna tabla (no validada en el Bloque 3) tiene una referencia, aquí saltará el HANDLER 1451.
+       ------------------------------------------------------------------------------------------------ */
+    DELETE FROM `Cat_Puestos_Trabajo` 
+    WHERE `Id_CatPuesto` = _Id_Puesto;
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 4.2: CONFIRMACIÓN (COMMIT)
+       Acción: Se finaliza la transacción.
+       Efecto: El bloqueo exclusivo se libera. El espacio en disco se marca como reutilizable.
+       ------------------------------------------------------------------------------------------------ */
+    COMMIT;
+
+    /* ================================================================================================
+       BLOQUE 5: RESPUESTA AL CLIENTE (RESPONSE MAPPING)
+       Propósito: Informar al Frontend/API que la operación concluyó exitosamente.
+       ================================================================================================ */
+    SELECT 
+        'ÉXITO: El Puesto ha sido eliminado permanentemente del sistema.' AS Mensaje, 
+        'HARD_DELETE' AS Tipo_Operacion,
+        _Id_Puesto AS Id_Recurso_Eliminado,
+        NOW() AS Fecha_Ejecucion;
+
+END$$
+
+DELIMITER ;
+
+/* ====================================================================================================
+   PROCEDIMIENTO ALMACENADO: SP_EliminarRolFisicamente
+   ====================================================================================================
+   
+   1. VISIÓN GENERAL Y OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   ----------------------------------------------------------------------------------------------------
+   Este procedimiento implementa la operación de ELIMINACIÓN FÍSICA (Hard Delete) sobre la entidad
+   "Rol de Sistema" (`Cat_Roles`).
+   
+   A diferencia de la "Baja Lógica" (que solo oculta el registro mediante un flag), este proceso DESTRUYE 
+   la información de manera permanente e irreversible. Su uso está estrictamente limitado a casos excepcionales:
+     A) Saneamiento de Datos (Data Cleansing): Eliminación de registros creados por error humano
+        inmediatamente después de su creación (antes de ser asignados a usuarios).
+     B) Depuración Administrativa: Mantenimiento técnico profundo por parte de Super-Admins.
+
+   2. ARQUITECTURA DE INTEGRIDAD REFERENCIAL (ESTRATEGIA "DEFENSA EN PROFUNDIDAD")
+   ----------------------------------------------------------------------------------------------------
+   Para prevenir la corrupción silenciosa de la seguridad del sistema (Orphaned Permissions), 
+   este SP implementa tres anillos de seguridad defensiva antes de permitir la destrucción:
+
+     ANILLO 1: VALIDACIÓN DE EXISTENCIA (Fail Fast)
+     - Rechaza inmediatamente IDs nulos o inexistentes para evitar abrir transacciones innecesarias.
+
+     ANILLO 2: VALIDACIÓN PROACTIVA DE NEGOCIO (Logic Guard)
+     - Consulta explícita a la tabla `Usuarios`.
+     - REGLA CRÍTICA: Si existe AL MENOS UN usuario (activo o inactivo) que tenga este rol asignado,
+       el registro se vuelve INBORRABLE. Esto es vital para no dejar usuarios con permisos "null" o rotos,
+       lo cual podría causar excepciones de "Null Pointer" en el middleware de autenticación.
+     - ACCIÓN: Devuelve un error 409 (Conflict) legible para el humano.
+
+     ANILLO 3: VALIDACIÓN REACTIVA DE MOTOR (Database Constraint - Last Resort)
+     - Se apoya en las Foreign Keys (FK) del motor InnoDB.
+     - Si existe una relación oculta (en una tabla nueva que olvidamos validar manualmente), el motor 
+       bloqueará el DELETE lanzando el error 1451.
+     - ACCIÓN: Un HANDLER captura este error y hace un Rollback seguro, devolviendo un mensaje amigable.
+
+   3. MODELO DE CONCURRENCIA Y BLOQUEO (ACID COMPLIANCE)
+   ----------------------------------------------------------------------------------------------------
+   - AISLAMIENTO: Serializable (vía Locking).
+   - MECÁNICA: Al ejecutar la validación previa, utilizamos `SELECT ... FOR UPDATE`. Esto adquiere
+     un BLOQUEO EXCLUSIVO (X-LOCK) sobre la fila objetivo.
+   - EFECTO: Nadie puede leer, editar o asignar este rol a un usuario durante los milisegundos
+     que dura la transacción de borrado. Esto evita la condición de carrera ("Race Condition") donde 
+     alguien asigna el rol justo antes de que sea borrado.
+
+   4. CONTRATO DE SALIDA (OUTPUT CONTRACT)
+   ----------------------------------------------------------------------------------------------------
+   Retorna un resultset de una sola fila (Single Row) indicando el éxito de la operación.
+   En caso de fallo, se lanzan señales SQLSTATE controladas (400, 404, 409).
+   ==================================================================================================== */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarRolFisicamente`$$
+
+CREATE PROCEDURE `SP_EliminarRolFisicamente`(
+    /* PARÁMETRO DE ENTRADA */
+    IN _Id_Rol INT -- PK: Identificador único del Rol a purgar.
+)
+THIS_PROC: BEGIN
+    
+    /* ================================================================================================
+       BLOQUE 0: VARIABLES DE DIAGNÓSTICO
+       Propósito: Definición de contenedores locales para almacenar el estado de las validaciones.
+       ================================================================================================ */
+    -- Semáforo para detectar si existen usuarios vinculados.
+    DECLARE v_Dependencias INT DEFAULT NULL;
+    
+    -- Bandera de existencia para el bloqueo pesimista.
+    DECLARE v_Existe INT DEFAULT NULL;
+
+    /* ================================================================================================
+       BLOQUE 1: DEFINICIÓN DE HANDLERS (MANEJO DE EXCEPCIONES TÉCNICAS)
+       Propósito: Asegurar que el procedimiento nunca termine abruptamente sin limpiar la transacción.
+       ================================================================================================ */
+    
+    /* ------------------------------------------------------------------------------------------------
+       HANDLER 1.1: PROTECCIÓN DE INTEGRIDAD REFERENCIAL (Error MySQL 1451)
+       Contexto: Este error ocurre cuando intentamos borrar un registro padre que tiene hijos (FK) activos.
+       Estrategia: "Graceful Failure". En lugar de mostrar un error SQL críptico al usuario,
+       revertimos la transacción y mostramos un mensaje de negocio explicativo.
+       ------------------------------------------------------------------------------------------------ */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; 
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD [1451]: El sistema de base de datos impidió el borrado. Existen registros vinculados a este Rol (como Usuarios) que no fueron detectados por la validación previa.'; 
+    END;
+
+    /* ------------------------------------------------------------------------------------------------
+       HANDLER 1.2: EXCEPCIÓN GENERAL (SQLEXCEPTION)
+       Contexto: Fallos de disco, pérdida de conexión de red, corrupción de índices, timeout.
+       Estrategia: Abortar operación (Rollback) y relanzar el error para logs del sistema.
+       ------------------------------------------------------------------------------------------------ */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; 
+    END;
+
+    /* ================================================================================================
+       BLOQUE 2: VALIDACIONES PRELIMINARES (FAIL FAST PATTERN)
+       Propósito: Validar la calidad de los datos de entrada antes de consumir recursos de procesamiento.
+       ================================================================================================ */
+    
+    /* 2.1 Validación de Sintaxis: El ID debe ser un entero positivo válido. */
+    IF _Id_Rol IS NULL OR _Id_Rol <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El parámetro ID de Rol es inválido o nulo.';
+    END IF;
+
+    /* ================================================================================================
+       BLOQUE 3: INICIO DE TRANSACCIÓN Y BLOQUEO DE SEGURIDAD
+       Propósito: Aislar el registro para evitar modificaciones concurrentes mientras validamos.
+       ================================================================================================ */
+    START TRANSACTION;
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 3.1: VERIFICACIÓN DE EXISTENCIA Y BLOQUEO (FOR UPDATE)
+       
+       Objetivo: Asegurar que el registro existe y "congelarlo" para nosotros.
+       Efecto: Si otro admin intenta asignar este rol en este preciso instante, su transacción se
+       detendrá hasta que nosotros terminemos (Serialize).
+       ------------------------------------------------------------------------------------------------ */
+    SELECT 1 INTO v_Existe
+    FROM `Cat_Roles`
+    WHERE `Id_Rol` = _Id_Rol
+    LIMIT 1
+    FOR UPDATE;
+
+    IF v_Existe IS NULL THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Rol que intenta eliminar no existe en la base de datos.';
+    END IF;
+
+    /* ================================================================================================
+       BLOQUE 4: CANDADO DE NEGOCIO (VALIDACIÓN LÓGICA DE DEPENDENCIAS)
+       Propósito: Aplicar las reglas de dominio específicas para la destrucción de información.
+       ================================================================================================ */
+    
+    /* ------------------------------------------------------------------------------------------------
+       PASO 4.1: INSPECCIÓN DE USUARIOS ASIGNADOS
+       
+       Objetivo Técnico: Escanear la tabla `Usuarios` para ver si la columna `Fk_Rol` apunta a este ID.
+       
+       Justificación: No podemos dejar usuarios "huérfanos" de rol, ya que el sistema no sabría
+       qué permisos otorgarles o qué vistas mostrarles.
+       ------------------------------------------------------------------------------------------------ */
+    
+    SELECT 1 INTO v_Dependencias
+    FROM `Usuarios` 
+    WHERE `Fk_Rol` = _Id_Rol
+    LIMIT 1;
+
+    /* Evaluación del Bloqueo: Si encontramos al menos un usuario, ABORTAMOS. */
+    IF v_Dependencias IS NOT NULL THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'CONFLICTO DE SEGURIDAD [409]: Operación denegada. No es posible eliminar este Rol porque existen USUARIOS registrados con este perfil. Debe reasignar el rol de esos usuarios antes de proceder.';
+    END IF;
+
+    /* ================================================================================================
+       BLOQUE 5: EJECUCIÓN DESTRUCTIVA (ZONA CRÍTICA)
+       Propósito: Ejecutar el borrado persistente de manera atómica.
+       ================================================================================================ */
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 5.1: EJECUCIÓN DEL DELETE
+       Acción: El motor intenta eliminar la fila física.
+       
+       Implicación de Motor (InnoDB):
+       1. Se verifica nuevamente la restricción de llave foránea (Constraint Check) a nivel físico.
+       2. Si pasa, se ejecuta el borrado físico de la página de datos.
+       
+       Red de Seguridad:
+       Si alguna tabla oculta tiene una referencia a este Rol, aquí saltará el HANDLER 1451.
+       ------------------------------------------------------------------------------------------------ */
+    DELETE FROM `Cat_Roles` 
+    WHERE `Id_Rol` = _Id_Rol;
+
+    /* ------------------------------------------------------------------------------------------------
+       PASO 5.2: CONFIRMACIÓN (COMMIT)
+       Acción: Se finaliza la transacción.
+       Efecto: El bloqueo exclusivo se libera. El espacio en disco se marca como reutilizable.
+       ------------------------------------------------------------------------------------------------ */
+    COMMIT;
+
+    /* ================================================================================================
+       BLOQUE 6: RESPUESTA AL CLIENTE (RESPONSE MAPPING)
+       Propósito: Informar al Frontend/API que la operación concluyó exitosamente.
+       ================================================================================================ */
+    SELECT 
+        'ÉXITO: El Rol ha sido eliminado permanentemente del sistema.' AS Mensaje, 
+        'HARD_DELETE' AS Tipo_Operacion,
+        _Id_Rol AS Id_Recurso_Eliminado,
+        NOW() AS Fecha_Ejecucion;
+
+END$$
+
+DELIMITER ;
+
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarUsuarioDefinitivamente
+   ============================================================================================
+
+   --------------------------------------------------------------------------------------------
+   I. VISIÓN GENERAL Y OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------------------------------------------------------------
+   [QUÉ ES]: 
+   Constituye el mecanismo de "Destrucción Física" (Hard Delete) dentro de la arquitectura 
+   del sistema. A diferencia de la "Baja Lógica" (Switch Activo/Inactivo), este procedimiento 
+   ejecuta sentencias `DELETE` que eliminan permanentemente los bits de información de los 
+   platos del disco duro, liberando espacio y referencias de integridad.
+
+   [CASO DE USO EXCLUSIVO - "DATA HYGIENE"]: 
+   Este SP está diseñado estrictamente para la "Corrección de Errores Administrativos Inmediatos".
+   Ejemplo: "El Administrador creó un usuario duplicado por error de dedo hace 5 minutos, 
+   se dio cuenta del error, y necesita borrarlo totalmente para volver a capturarlo limpio".
+   
+   [ADVERTENCIA OPERATIVA]: 
+   BAJO NINGUNA CIRCUNSTANCIA debe utilizarse para gestionar despidos, renuncias o jubilaciones. 
+   Si un empleado deja la empresa, su expediente constituye un activo legal que DEBE conservarse 
+   por razones de auditoría laboral. Para esos casos es obligatorio usar `SP_CambiarEstatusUsuario`.
+
+   --------------------------------------------------------------------------------------------
+   II. ARQUITECTURA DE SEGURIDAD E INTEGRIDAD (THE SAFETY NET)
+   --------------------------------------------------------------------------------------------
+   [RN-01] PROTOCOLO ANTI-SUICIDIO (SELF-DESTRUCTION PREVENTION):
+      - Principio: "El sistema debe protegerse contra errores humanos catastróficos".
+      - Regla: Un usuario autenticado no puede ejecutar este SP contra su propio ID 
+        (`_Id_Admin_Ejecutor` != `_Id_Usuario_Objetivo`).
+      - Impacto: Previene que un administrador se elimine a sí mismo accidentalmente, lo que 
+        podría dejar al sistema acéfalo.
+
+   [RN-02] ANÁLISIS FORENSE DE INSTRUCTOR (OPERATIONAL FOOTPRINT):
+      - Validación: Antes de permitir el borrado, el sistema realiza un escaneo profundo en la 
+        tabla `DatosCapacitaciones`.
+      - Regla: Si el usuario aparece como `Fk_Id_Instructor` en CUALQUIER curso (Pasado, 
+        Presente o Futuro), la eliminación se bloquea inmediatamente con Error 409.
+      - Justificación: Borrar al instructor dejaría "cursos huérfanos" en los reportes históricos,
+        donde un curso aparecería sin responsable asignado, rompiendo la integridad del historial.
+
+   [RN-03] ANÁLISIS FORENSE DE PARTICIPANTE (ACADEMIC FOOTPRINT):
+      - Validación: El sistema escanea la tabla `Capacitaciones_Participantes`.
+      - Regla: Si el usuario tiene registros de asistencia o calificación, se bloquea.
+      - Justificación: Es ilegal destruir evidencia de capacitación de un empleado (Auditoría STPS).
+        Un kárdex académico es un documento legal que debe persistir más allá de la vida laboral.
+
+   --------------------------------------------------------------------------------------------
+   III. ESPECIFICACIÓN TÉCNICA (DATABASE ARCHITECTURE)
+   --------------------------------------------------------------------------------------------
+   - TIPO: Transacción ACID Destructiva.
+   - ESTRATEGIA DE CONCURRENCIA: Se utiliza `SELECT ... FOR UPDATE` para adquirir un bloqueo 
+     exclusivo (X-LOCK) sobre el registro objetivo al inicio de la transacción. Esto evita 
+     "Condiciones de Carrera" donde otro proceso podría intentar asignar un curso al usuario 
+     mientras este está siendo eliminado.
+   
+   - ORDEN DE EJECUCIÓN (CASCADE LOGIC):
+      Debido a la restricción de llave foránea (`Fk_Id_InfoPersonal` dentro de la tabla `Usuarios`),
+      el borrado debe seguir un orden quirúrgico para evitar errores de Constraint `ON DELETE NO ACTION`:
+        1. Eliminar Entidad Hija (`Usuarios`) -> Libera la referencia FK.
+        2. Eliminar Entidad Padre (`Info_Personal`) -> Borra el dato demográfico.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarUsuarioDefinitivamente`$$
+
+CREATE PROCEDURE `SP_EliminarUsuarioDefinitivamente`(
+    /* -----------------------------------------------------------------
+       PARÁMETROS DE ENTRADA
+       ----------------------------------------------------------------- */
+    IN _Id_Admin_Ejecutor    INT,   -- [AUDITOR] Quién ordena la ejecución (Para logs de aplicación)
+    IN _Id_Usuario_Objetivo  INT    -- [TARGET] El usuario a eliminar físicamente
+)
+THIS_PROC: BEGIN
+    
+    /* ========================================================================================
+       BLOQUE 0: VARIABLES DE DIAGNÓSTICO Y CONTEXTO
+       Propósito: Inicializar contenedores en memoria para realizar el análisis forense 
+       antes de proceder con cualquier operación destructiva.
+       ======================================================================================== */
+    
+    /* Punteros de Relación para el borrado en cascada */
+    DECLARE v_Id_InfoPersonal INT DEFAULT NULL; -- ID de la tabla padre (Info_Personal)
+    DECLARE v_Ficha_Objetivo  VARCHAR(50);      -- Dato visual para el mensaje de éxito
+    DECLARE v_Existe          INT;              -- Bandera de existencia del registro
+    
+    /* Banderas de Análisis Forense (Semáforos de Integridad) */
+    /* Si estas variables dejan de ser NULL, significa que el usuario tiene "Ataduras" */
+    DECLARE v_Es_Instructor   INT DEFAULT NULL;
+    DECLARE v_Es_Participante INT DEFAULT NULL;
+
+    /* ========================================================================================
+       BLOQUE 1: GESTIÓN DE EXCEPCIONES (HANDLERS)
+       Propósito: Garantizar la Atomicidad. Si algo falla a mitad del borrado, el sistema 
+       debe regresar al estado exacto anterior.
+       ======================================================================================== */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; -- Propagar el error original al Backend para debugging
+    END;
+
+    /* ========================================================================================
+       BLOQUE 2: VALIDACIONES PREVIAS (FAIL FAST)
+       Propósito: Validar la integridad de la petición antes de consumir recursos de BD.
+       ======================================================================================== */
+    
+    /* 2.1 Integridad de Inputs */
+    IF _Id_Usuario_Objetivo IS NULL OR _Id_Usuario_Objetivo <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: ID de usuario inválido.';
+    END IF;
+
+    /* 2.2 Protección Anti-Suicidio (Seguridad Básica) 
+       [RN-01] Un usuario no puede eliminarse a sí mismo. */
+    IF _Id_Admin_Ejecutor = _Id_Usuario_Objetivo THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ACCIÓN DENEGADA [403]: No puedes eliminarte a ti mismo. Por seguridad, pide a otro administrador que realice esta acción.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: INSPECCIÓN Y BLOQUEO (FORENSIC ANALYSIS)
+       Propósito: "Congelar" al usuario y verificar si tiene ataduras históricas antes de borrar.
+       ======================================================================================== */
+    START TRANSACTION;
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 3.1: ADQUISICIÓN DE SNAPSHOT Y CANDADO DE ESCRITURA (X-LOCK)
+       - Buscamos al usuario.
+       - FOR UPDATE: Bloqueamos la fila. Nadie puede editar, asignar cursos o borrar a este 
+         usuario hasta que terminemos el análisis.
+       ---------------------------------------------------------------------------------------- */
+    SELECT 
+        1, 
+        `Fk_Id_InfoPersonal`, 
+        `Ficha`
+    INTO 
+        v_Existe, 
+        v_Id_InfoPersonal, 
+        v_Ficha_Objetivo
+    FROM `Usuarios`
+    WHERE `Id_Usuario` = _Id_Usuario_Objetivo
+    FOR UPDATE;
+
+    /* Validación de Existencia */
+    IF v_Existe IS NULL THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR [404]: El usuario no existe o ya fue eliminado.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 3.2: ANÁLISIS FORENSE DE INSTRUCTOR (Operational Trace) [RN-02]
+       Objetivo: Verificar si el usuario ha impartido capacitación alguna vez.
+       Lógica: Escaneo en `DatosCapacitaciones`. Si existe 1 registro, es intocable.
+       ---------------------------------------------------------------------------------------- */
+    SELECT 1 INTO v_Es_Instructor
+    FROM `DatosCapacitaciones`
+    WHERE `Fk_Id_Instructor` = _Id_Usuario_Objetivo
+    LIMIT 1;
+
+    IF v_Es_Instructor IS NOT NULL THEN
+        ROLLBACK; -- Liberamos el bloqueo inmediatamente
+        SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD [409]: Imposible eliminar. Este usuario figura como INSTRUCTOR en el historial de capacitaciones. La eliminación rompería la integridad de los reportes. Use la opción "Desactivar" para archivar el expediente.';
+    END IF;
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 3.3: ANÁLISIS FORENSE DE PARTICIPANTE (Academic Trace) [RN-03]
+       Objetivo: Verificar si el usuario tiene historial académico.
+       Lógica: Escaneo en `Capacitaciones_Participantes`. Si tiene asistencia/calificación, es intocable.
+       ---------------------------------------------------------------------------------------- */
+    SELECT 1 INTO v_Es_Participante
+    FROM `Capacitaciones_Participantes`
+    WHERE `Fk_Id_Usuario` = _Id_Usuario_Objetivo
+    LIMIT 1;
+
+    IF v_Es_Participante IS NOT NULL THEN
+        ROLLBACK; -- Liberamos el bloqueo inmediatamente
+        SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD [409]: Imposible eliminar. Este usuario tiene historial académico como PARTICIPANTE (Calificaciones/Asistencia). Es ilegal destruir esta evidencia. Use la opción "Desactivar".';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 4: EJECUCIÓN DESTRUCTIVA (HARD DELETE SEQUENCE)
+       Si el flujo llega a este punto, el análisis forense determinó que el usuario está "Limpio"
+       (no tiene historial operativo ni académico). Es seguro proceder.
+       ======================================================================================== */
+    
+    /* ----------------------------------------------------------------------------------------
+       PASO 4.1: ELIMINAR CUENTA DE USUARIO (ENTIDAD HIJA)
+       Acción: Borramos primero la tabla `Usuarios`.
+       Razón Técnica: Esta tabla tiene la llave foránea `Fk_Id_InfoPersonal`. Debemos romper 
+       este vínculo antes de poder borrar al "Padre" (`Info_Personal`).
+       ---------------------------------------------------------------------------------------- */
+    DELETE FROM `Usuarios` 
+    WHERE `Id_Usuario` = _Id_Usuario_Objetivo;
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 4.2: ELIMINAR DATOS PERSONALES (ENTIDAD PADRE)
+       Acción: Borramos el registro en `Info_Personal`.
+       Condición: Solo si existía un vínculo (v_Id_InfoPersonal NOT NULL).
+       Resultado: El expediente ha sido purgado completamente.
+       ---------------------------------------------------------------------------------------- */
+    IF v_Id_InfoPersonal IS NOT NULL THEN
+        DELETE FROM `Info_Personal` 
+        WHERE `Id_InfoPersonal` = v_Id_InfoPersonal;
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 5: CONFIRMACIÓN FINAL
+       Propósito: Hacer permanentes los cambios y notificar al usuario.
+       ======================================================================================== */
+    COMMIT;
+
+    /* Feedback de éxito estructurado para el Frontend */
+    SELECT 
+        CONCAT('ELIMINACIÓN EXITOSA: El usuario con Ficha ', v_Ficha_Objetivo, ' y todos sus datos asociados han sido borrados permanentemente del sistema.') AS Mensaje,
+        _Id_Usuario_Objetivo AS Id_Eliminado,
+        'ELIMINADO' AS Accion;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarTipoInstruccionFisico
+   ============================================================================================
+   
+   1. OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   --------------------------------------
+   Ejecutar la eliminación DEFINITIVA, FÍSICA e IRREVERSIBLE de un registro en el catálogo
+   de "Tipos de Instrucción" (`Cat_Tipos_Instruccion_Cap`).
+
+   CONTEXTO DE USO Y ADVERTENCIAS:
+   - Naturaleza: Operación Destructiva (`DELETE`).
+   - Caso de Uso Permitido: Únicamente para tareas de depuración administrativa inmediata
+     (ej: "Acabo de crear por error el tipo 'TallerX' y quiero borrarlo ya").
+   - Restricción: NO debe usarse para la gestión operativa histórica. Si un tipo dejó de
+     usarse, se debe usar el procedimiento de Baja Lógica (`SP_CambiarEstatusTipoInstruccion`)
+     para no romper la clasificación de los cursos antiguos.
+
+   2. ESTRATEGIA DE INTEGRIDAD REFERENCIAL (DEFENSA EN CAPAS)
+   ----------------------------------------------------------
+   Para garantizar que la base de datos nunca quede con "Cursos Huérfanos" (temas apuntando
+   a un tipo que ya no existe), implementamos dos niveles de seguridad:
+
+   CAPA A: VALIDACIÓN DE NEGOCIO PROACTIVA (Logic Guard)
+   - Antes de intentar borrar, el SP escanea explícitamente la tabla hija `Cat_Temas_Capacitacion`.
+   - Criterio Estricto: Si existe CUALQUIER historial (sea un curso activo o uno dado de baja),
+     la operación se aborta.
+   - Beneficio: Permite devolver un mensaje de error semántico ("No se puede borrar porque hay
+     temas asociados") en lugar de un error técnico de SQL.
+
+   CAPA B: VALIDACIÓN DE MOTOR REACTIVA (Database Constraint - Safety Net)
+   - Si existiera una tabla oculta o futura que olvidamos validar manualmente, el motor InnoDB
+     bloqueará el `DELETE` disparando el error `1451` (Foreign Key Constraint Fails).
+   - El SP captura este error mediante un `HANDLER`, hace Rollback seguro y entrega un mensaje controlado.
+
+   3. ATOMICIDAD Y CONCURRENCIA
+   ----------------------------
+   - La operación se envuelve en una transacción.
+   - El motor aplica un bloqueo exclusivo (X-Lock) sobre la fila durante el borrado, asegurando
+     que nadie más pueda leer o vincular este tipo mientras se destruye.
+
+   4. CONTRATO DE SALIDA (OUTPUT)
+   ------------------------------
+   Retorna un dataset informativo:
+      - Mensaje: Confirmación de éxito.
+      - Accion: 'ELIMINADA'.
+      - Id_Tipo: El ID del recurso purgado.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarTipoInstruccionFisico`$$
+
+CREATE PROCEDURE `SP_EliminarTipoInstruccionFisico`(
+    /* -----------------------------------------------------------------
+       PARÁMETROS DE ENTRADA
+       ----------------------------------------------------------------- */
+    IN _Id_Tipo INT -- Identificador único del registro a destruir (PK)
+)
+THIS_PROC: BEGIN
+    
+    /* ========================================================================================
+       BLOQUE 0: VARIABLES DE DIAGNÓSTICO
+       ======================================================================================== */
+    /* Variable para almacenar el resultado de la búsqueda de dependencias */
+    DECLARE v_Dependencias INT DEFAULT NULL;
+
+    /* ========================================================================================
+       BLOQUE 1: HANDLERS (MANEJO ROBUSTO DE EXCEPCIONES)
+       ======================================================================================== */
+    
+    /* 1.1 HANDLER DE INTEGRIDAD REFERENCIAL (Error 1451)
+       Objetivo: Actuar como "paracaídas" final.
+       Escenario: Intentamos borrar, pero el motor de BD detecta una FK activa apuntando a este registro.
+       Acción: Revertir todo y avisar al usuario. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; 
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD (SISTEMA) [1451]: El registro está blindado por la base de datos porque existen referencias en otras tablas no depuradas.'; 
+    END;
+
+    /* 1.2 HANDLER GENÉRICO (SQLEXCEPTION)
+       Objetivo: Capturar fallos de infraestructura. */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; 
+    END;
+
+    /* ========================================================================================
+       BLOQUE 2: VALIDACIONES PREVIAS (FAIL FAST)
+       ======================================================================================== */
+    
+    /* 2.1 Validación de Input */
+    IF _Id_Tipo IS NULL OR _Id_Tipo <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: Identificador inválido.';
+    END IF;
+
+    /* 2.2 Validación de Existencia
+       Verificamos si el registro existe antes de verificar dependencias. */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Tipos_Instruccion_Cap` WHERE `Id_CatTipoInstCap` = _Id_Tipo) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Tipo de Instrucción que intenta eliminar no existe.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CANDADO DE NEGOCIO (VALIDACIÓN PROACTIVA DE DEPENDENCIAS)
+       ======================================================================================== */
+    
+    /* OBJETIVO: Proteger el Historial Académico.
+       Buscamos en la tabla `Cat_Temas_Capacitacion`.
+       CRÍTICO: NO filtramos por `Activo = 1`. 
+       Razón: Si un curso "Excel 97" usaba este tipo y hoy está dado de baja, 
+       ese historial sigue existiendo. Borrar el tipo rompería la integridad de ese registro. */
+    
+    SELECT 1 INTO v_Dependencias
+    FROM `Cat_Temas_Capacitacion`
+    WHERE `Fk_Id_CatTipoInstCap` = _Id_Tipo
+    LIMIT 1;
+
+    /* SI ENCONTRAMOS AL MENOS UN REGISTRO ASOCIADO... */
+    IF v_Dependencias IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE NEGOCIO [409]: No es posible eliminar este Tipo porque existen TEMAS DE CAPACITACIÓN (Activos o Históricos) asociados a él. La eliminación física rompería el catálogo de cursos. Utilice la opción "Desactivar" en su lugar.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 4: EJECUCIÓN DESTRUCTIVA (ZONA CRÍTICA)
+       ======================================================================================== */
+    START TRANSACTION;
+
+    /* Ejecución del Borrado Físico.
+       En este punto, el motor adquiere un bloqueo exclusivo sobre la fila. */
+    DELETE FROM `Cat_Tipos_Instruccion_Cap` 
+    WHERE `Id_CatTipoInstCap` = _Id_Tipo;
+
+    /* Si llegamos aquí sin que salten los Handlers,
+       significa que el registro estaba limpio y fue destruido correctamente. */
+    COMMIT;
+
+    /* ========================================================================================
+       BLOQUE 5: CONFIRMACIÓN
+       ======================================================================================== */
+    SELECT 
+        'Registro eliminado permanentemente de la base de datos.' AS Mensaje, 
+        'ELIMINADA' AS Accion,
+        _Id_Tipo AS Id_Tipo_Instruccion;
+
+END$$
+
+DELIMITER ;
+
+
+/* ============================================================================================
+   PROCEDIMIENTO: SP_EliminarTemaCapacitacionFisico
+   ============================================================================================
+   
+   --------------------------------------------------------------------------------------------
+   I. PROPÓSITO Y OBJETIVO DE NEGOCIO (THE "WHAT" & "WHY")
+   --------------------------------------------------------------------------------------------
+   [QUÉ ES]:
+   Es el mecanismo de "Destrucción Total" (Hard Delete) para un registro del catálogo de 
+   Temas de Capacitación (Cursos).
+   
+   [ADVERTENCIA DE SEGURIDAD]:
+   Esta operación es IRREVERSIBLE. Elimina físicamente la fila de la base de datos.
+   Su uso está estrictamente restringido a tareas de **Saneamiento de Datos** (Data Cleansing)
+   para corregir errores de captura inmediata (ej: se creó un curso duplicado por error y se
+   borra al instante antes de usarse).
+
+   [INTEGRIDAD REFERENCIAL - EL PROBLEMA DE LA "ORFANDAD"]:
+   Si eliminamos un Tema (ej: "Soldadura") que fue utilizado en una capacitación hace 3 años,
+   automáticamente corrompemos el historial de todos los empleados que tomaron ese curso.
+   El reporte diría: "Juan Pérez tomó el curso NULL".
+   
+   Este SP previene esa corrupción mediante una estrategia de **Defensa en Profundidad**.
+
+   --------------------------------------------------------------------------------------------
+   II. ESTRATEGIA DE DEFENSA EN CAPAS (LAYERED DEFENSE)
+   --------------------------------------------------------------------------------------------
+   Para garantizar "Cero Orfandad", implementamos tres anillos de seguridad:
+
+   [ANILLO 1] VALIDACIÓN DE EXISTENCIA (FAIL FAST):
+      - Se rechazan IDs nulos o inexistentes antes de iniciar cualquier transacción costosa.
+
+   [ANILLO 2] VALIDACIÓN DE NEGOCIO PROACTIVA (LOGIC GUARD):
+      - Antes de intentar borrar, el SP realiza un escaneo forense en la tabla `Capacitaciones`.
+      - REGLA DE ORO: Si existe **CUALQUIER** historial (Programado, Finalizado, Cancelado) 
+        vinculado a este tema, la operación se ABORTA con un error 409 (Conflicto).
+      - BENEFICIO: Provee un mensaje de error semántico y humano ("No se puede borrar porque tiene historial") 
+        en lugar de un error técnico genérico.
+
+   [ANILLO 3] VALIDACIÓN REACTIVA DE MOTOR (DATABASE CONSTRAINT):
+      - Actúa como "Red de Seguridad" final.
+      - Si existiera una tabla oculta (ej: `Material_Didactico`) que olvidamos validar manualmente, 
+        el motor InnoDB bloqueará el `DELETE` disparando el error `1451` (Foreign Key Constraint Fails).
+      - El SP captura este error, hace Rollback y entrega un mensaje controlado.
+
+   --------------------------------------------------------------------------------------------
+   III. ESPECIFICACIÓN TÉCNICA (ACID)
+   --------------------------------------------------------------------------------------------
+   - TIPO: Transacción Atómica.
+   - BLOQUEO: Al ejecutar el `DELETE`, el motor InnoDB adquiere un **Bloqueo Exclusivo (X-Lock)**
+     sobre la fila, asegurando que nadie más pueda leer o vincular este tema mientras se destruye.
+   ============================================================================================ */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarTemaCapacitacionFisico`$$
+
+CREATE PROCEDURE `SP_EliminarTemaCapacitacionFisico`(
+    /* -----------------------------------------------------------------
+       PARÁMETROS DE ENTRADA
+       ----------------------------------------------------------------- */
+    IN _Id_Tema INT -- [OBLIGATORIO] Identificador único del registro a destruir (PK)
+)
+THIS_PROC: BEGIN
+    
+    /* ========================================================================================
+       BLOQUE 0: VARIABLES DE DIAGNÓSTICO
+       Propósito: Contenedores locales para los resultados de las pruebas de integridad.
+       ======================================================================================== */
+    
+    /* [Semáforo de Dependencias]
+       Almacena el resultado del escaneo en tablas hijas. 
+       NULL = Limpio / NOT NULL = Tiene historial. */
+    DECLARE v_Dependencias INT DEFAULT NULL;
+
+    /* ========================================================================================
+       BLOQUE 1: HANDLERS (MANEJO ROBUSTO DE EXCEPCIONES)
+       Propósito: Asegurar que la transacción nunca quede abierta ante un error.
+       ======================================================================================== */
+    
+    /* [1.1] HANDLER DE INTEGRIDAD REFERENCIAL (Error 1451 - MySQL FK Constraint)
+       OBJETIVO: Actuar como "paracaídas" final.
+       ESCENARIO: Intentamos borrar, pero el motor de BD detecta una FK activa en una tabla 
+       desconocida o futura que apunta a este registro.
+       ACCIÓN: Revertir todo (ROLLBACK) y avisar al usuario que la BD protegió el dato. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; 
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD (SISTEMA) [1451]: El registro está blindado por la base de datos porque existen referencias en otras tablas (posiblemente materiales o evaluaciones) que impiden su eliminación.'; 
+    END;
+
+    /* [1.2] HANDLER GENÉRICO (SQLEXCEPTION)
+       OBJETIVO: Capturar fallos de infraestructura (Disco lleno, caída de red). */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; 
+    END;
+
+    /* ========================================================================================
+       BLOQUE 2: VALIDACIONES PREVIAS (FAIL FAST PATTERN)
+       Propósito: Validar la calidad de los datos de entrada antes de consumir recursos.
+       ======================================================================================== */
+    
+    /* 2.1 Validación de Input */
+    IF _Id_Tema IS NULL OR _Id_Tema <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El Identificador del Tema es inválido.';
+    END IF;
+
+    /* 2.2 Validación de Existencia
+       Verificamos si el registro existe antes de gastar recursos buscando sus dependencias. */
+    IF NOT EXISTS (SELECT 1 FROM `Cat_Temas_Capacitacion` WHERE `Id_Cat_TemasCap` = _Id_Tema) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Tema de Capacitación que intenta eliminar no existe.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: CANDADO DE NEGOCIO (VALIDACIÓN PROACTIVA DE DEPENDENCIAS)
+       Propósito: Proteger la coherencia de los datos operativos (Capacitaciones).
+       ======================================================================================== */
+    
+    /* [ANÁLISIS FORENSE DE CAPACITACIONES]
+       Objetivo: Proteger el Historial Operativo.
+       Buscamos en la tabla `Capacitaciones` (Módulo Siguiente).
+       
+       CRITERIO CRÍTICO: NO filtramos por `Activo = 1`.
+       Razón: Si se impartió un curso de "Soldadura" hace 3 años y hoy está finalizado/inactivo,
+       ese registro histórico es SAGRADO para las auditorías. Borrar el Tema rompería la 
+       integridad referencial de ese reporte histórico. */
+    
+    SELECT 1 INTO v_Dependencias
+    FROM `Capacitaciones`
+    WHERE `Fk_Id_Cat_TemasCap` = _Id_Tema
+    LIMIT 1; -- Optimización: Con encontrar uno solo es suficiente para detener el proceso.
+
+    /* [EVALUACIÓN DEL BLOQUEO] */
+    IF v_Dependencias IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000' 
+            SET MESSAGE_TEXT = 'BLOQUEO DE NEGOCIO [409]: No es posible eliminar este Tema porque existen CAPACITACIONES (Programadas, Finalizadas o Históricas) asociadas a él. La eliminación física rompería el historial de la empresa. Utilice la opción "Desactivar" (Baja Lógica) en su lugar.';
+    END IF;
+
+    /*  */
+
+    /* ========================================================================================
+       BLOQUE 4: EJECUCIÓN DESTRUCTIVA (ZONA CRÍTICA)
+       Propósito: Ejecutar el borrado persistente de manera atómica.
+       ======================================================================================== */
+    START TRANSACTION;
+
+    /* 4.1 Ejecución del Borrado Físico.
+       En este punto, el motor InnoDB adquiere un BLOQUEO EXCLUSIVO (X-LOCK) sobre la fila.
+       Esto asegura que nadie más pueda leer o asignar este tema durante el microsegundo 
+       que dura la destrucción. */
+    DELETE FROM `Cat_Temas_Capacitacion` 
+    WHERE `Id_Cat_TemasCap` = _Id_Tema;
+
+    /* 4.2 Confirmación.
+       Si llegamos aquí sin que salten los Handlers (especialmente el 1451),
+       significa que el registro estaba limpio y fue destruido correctamente. */
+    COMMIT;
+
+    /* ========================================================================================
+       BLOQUE 5: CONFIRMACIÓN Y RESPUESTA
+       Propósito: Informar al Frontend/API que la operación concluyó exitosamente.
+       ======================================================================================== */
+    SELECT 
+        'Registro eliminado permanentemente de la base de datos.' AS Mensaje, 
+        'ELIMINADA' AS Accion,
+        _Id_Tema AS Id_Tema;
+
+END$$
+
+DELIMITER ;
+
+/* ====================================================================================================
+   PROCEDIMIENTO: SP_EliminarEstatusCapacitacionFisico
+   ====================================================================================================
+
+   ----------------------------------------------------------------------------------------------------
+   I. VISIÓN GENERAL Y OBJETIVO DE NEGOCIO (EXECUTIVE SUMMARY)
+   ----------------------------------------------------------------------------------------------------
+   [QUÉ ES]:
+   Este procedimiento representa el mecanismo de "Eliminación Dura" o "Destrucción Física" para un registro
+   del catálogo de Estatus de Capacitación. Su función es ejecutar un comando `DELETE` real en la base de datos,
+   borrando la información de manera irreversible.
+
+   [CUÁNDO SE USA (ESCENARIOS DE USO)]:
+   Esta operación está reservada exclusivamente para tareas de **Corrección Administrativa Inmediata**.
+   Se utiliza cuando un administrador ha creado un registro por error (ej: "ESTATUS_PRUEBA_123" o con un código incorrecto)
+   y detecta el error antes de que el registro haya sido utilizado en cualquier operación del sistema.
+
+   [DIFERENCIA CRÍTICA CON BAJA LÓGICA]:
+   - Baja Lógica (`SP_CambiarEstatus...`): "Este estatus existió y se usó en el pasado, pero ya no lo queremos ver en listas nuevas".
+     Se logra cambiando `Activo = 0`. Mantiene la historia.
+   - Baja Física (Este SP): "Este estatus fue un error de dedo, nunca debió existir y nadie lo ha usado".
+     Se logra con `DELETE FROM`. Borra la historia.
+
+   ----------------------------------------------------------------------------------------------------
+   II. MATRIZ DE RIESGOS Y REGLAS DE BLINDAJE (ZERO TOLERANCE INTEGRITY)
+   ----------------------------------------------------------------------------------------------------
+   [RN-01] CANDADO DE HISTORIAL ABSOLUTO (HISTORICAL LOCK):
+      - Principio: "La historia es sagrada e inmutable".
+      - Regla de Negocio: Está estrictamente PROHIBIDO eliminar físicamente un estatus si este ha sido referenciado
+        en **CUALQUIER** momento por una capacitación (`DatosCapacitaciones`).
+      - Alcance de la Validación: La validación no distingue entre capacitaciones activas o inactivas. Si existe
+        un registro de hace 5 años (aunque esté borrado lógicamente) que usó este estatus, la eliminación se bloquea.
+      - Justificación Técnica: Si permitimos el borrado, las capacitaciones históricas quedarían con una llave foránea
+        rota (`Fk_Id_CatEstCap` apuntando a un ID inexistente), lo que provocaría errores en reportes, auditorías
+        o violaciones de integridad referencial a nivel de motor de base de datos (Error 1451).
+
+   ----------------------------------------------------------------------------------------------------
+   III. ESPECIFICACIÓN TÉCNICA (DATABASE SPECS)
+   ----------------------------------------------------------------------------------------------------
+   - TIPO: Transacción ACID con nivel de aislamiento serializable para la fila objetivo.
+   - ESTRATEGIA DE CONCURRENCIA: Implementación de **Bloqueo Pesimista** (`SELECT ... FOR UPDATE`).
+     Esto asegura que mientras el sistema verifica si el registro tiene dependencias, ningún otro usuario
+     pueda agregarle una dependencia nueva (Race Condition).
+   - MANEJO DE ERRORES: Captura específica de violaciones de integridad referencial (SQLSTATE 1451) como
+     segunda línea de defensa.
+
+   ==================================================================================================== */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarEstatusCapacitacionFisico`$$
+
+CREATE PROCEDURE `SP_EliminarEstatusCapacitacionFisico`(
+    IN _Id_Estatus INT -- [OBLIGATORIO] El Identificador Único (PK) del registro que se desea destruir permanentemente.
+)
+THIS_PROC: BEGIN
+
+    /* ========================================================================================
+       BLOQUE 0: DEFINICIÓN DE VARIABLES DE ENTORNO
+       Propósito: Inicializar los contenedores temporales necesarios para la lógica de validación.
+       ======================================================================================== */
+    
+    /* Variable de control para verificar si el registro objetivo existe en la base de datos. */
+    DECLARE v_Existe INT DEFAULT NULL;
+    
+    /* Variable para almacenar el nombre del estatus y usarlo en el mensaje de éxito (Feedback de usuario). */
+    DECLARE v_Nombre_Estatus VARCHAR(255) DEFAULT NULL;
+    
+    /* Variable contador para cuantificar el número de veces que este estatus ha sido utilizado en la historia. */
+    DECLARE v_Referencias INT DEFAULT 0;
+
+    /* ========================================================================================
+       BLOQUE 1: DEFINICIÓN DE HANDLERS (SISTEMA DE DEFENSA)
+       Propósito: Establecer protocolos de respuesta ante errores técnicos críticos.
+       ======================================================================================== */
+    
+    /* [1.1] Handler para Error de Llave Foránea (Foreign Key Constraint Fail - 1451)
+       Objetivo: Actúa como una red de seguridad final. Si por alguna razón nuestra validación manual (Bloque 4)
+       falla o se omite, el motor de base de datos intentará bloquear el DELETE si hay hijos. Este handler
+       captura ese error nativo y lo traduce a un mensaje comprensible para el usuario. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; -- Deshace cualquier cambio pendiente.
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [1451]: No se puede eliminar el registro porque existen dependencias a nivel de base de datos (FK Constraint) que no fueron detectadas previamente.'; 
+    END;
+
+    /* [1.2] Handler Genérico para Excepciones SQL
+       Objetivo: Capturar cualquier otro error imprevisto (caída de conexión, disco lleno, error de sintaxis). */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; -- Reenvía el error original al servidor de aplicaciones.
+    END;
+
+    /* ========================================================================================
+       BLOQUE 2: VALIDACIONES PREVIAS (FAIL FAST)
+       Propósito: Verificar la integridad de los parámetros de entrada antes de iniciar procesos costosos.
+       ======================================================================================== */
+    
+    /* Validación de Integridad: El ID no puede ser nulo ni menor o igual a cero. */
+    IF _Id_Estatus IS NULL OR _Id_Estatus <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: El ID de Estatus proporcionado es inválido.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: INICIO DE TRANSACCIÓN Y BLOQUEO PESIMISTA
+       Propósito: Aislar el registro objetivo del resto del sistema para operar con seguridad.
+       ======================================================================================== */
+    START TRANSACTION;
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 3.1: LECTURA Y BLOQUEO DEL REGISTRO OBJETIVO
+       ----------------------------------------------------------------------------------------
+       Ejecutamos una consulta para obtener los datos del registro y aplicar un bloqueo de escritura (`FOR UPDATE`).
+       
+       EFECTO DEL BLOQUEO:
+       - La fila correspondiente a `_Id_Estatus` queda "congelada".
+       - Nadie puede editar este estatus mientras decidimos si lo borramos.
+       - Nadie puede usar este estatus para una nueva capacitación mientras estamos aquí.
+       - Nadie puede borrarlo en paralelo. */
+    
+    SELECT 1, `Nombre` 
+    INTO v_Existe, v_Nombre_Estatus
+    FROM `Cat_Estatus_Capacitacion`
+    WHERE `Id_CatEstCap` = _Id_Estatus
+    LIMIT 1
+    FOR UPDATE;
+
+    /* Validación de Existencia: Si el SELECT no encontró nada, `v_Existe` será NULL. */
+    IF v_Existe IS NULL THEN
+        ROLLBACK; -- Liberamos recursos aunque no haya locks efectivos.
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Estatus solicitado para eliminación no existe.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 4: REGLAS DE NEGOCIO (INTEGRIDAD REFERENCIAL MANUAL)
+       Propósito: Verificar lógicamente si es seguro proceder con la destrucción.
+       ======================================================================================== */
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 4.1: ESCANEO DE HISTORIAL (EL CANDADO ABSOLUTO)
+       ----------------------------------------------------------------------------------------
+       Realizamos un conteo en la tabla operativa `DatosCapacitaciones` para ver si este ID
+       aparece en la columna `Fk_Id_CatEstCap`.
+       
+       CRITERIO DE BÚSQUEDA (IMPORTANTE):
+       - NO aplicamos ningún filtro de `Activo = 1`.
+       - Buscamos en TODO el historial, incluyendo registros que hayan sido dados de baja lógica.
+       - Razón: La integridad referencial física de la base de datos no distingue entre registros activos o inactivos.
+         Si existe una fila hija apuntando a este padre, el padre no puede morir. */
+    
+    SELECT COUNT(*) INTO v_Referencias
+    FROM `DatosCapacitaciones`
+    WHERE `Fk_Id_CatEstCap` = _Id_Estatus;
+
+    /* EVALUACIÓN DEL RESULTADO:
+       Si `v_Referencias` es mayor a 0, significa que el estatus tiene historia.
+       Por lo tanto, la eliminación física está prohibida. */
+    IF v_Referencias > 0 THEN
+        ROLLBACK; -- Cancelamos la operación de borrado.
+        SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'BLOQUEO DE INTEGRIDAD [409]: Imposible eliminar físicamente este Estatus. Existen registros históricos de capacitaciones (activos o inactivos) asociados a él. Para ocultarlo, utilice la opción de DESACTIVACIÓN (Baja Lógica).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 5: EJECUCIÓN DESTRUCTORA (DELETE)
+       Propósito: Realizar el borrado físico una vez superadas todas las validaciones.
+       ======================================================================================== */
+    
+    /* Si el flujo llega a este punto, significa que:
+       1. El registro existe.
+       2. Está bloqueado para nosotros.
+       3. No tiene ninguna dependencia en la tabla de capacitaciones.
+       Es seguro proceder con la destrucción. */
+       
+    DELETE FROM `Cat_Estatus_Capacitacion`
+    WHERE `Id_CatEstCap` = _Id_Estatus;
+
+    /* ========================================================================================
+       BLOQUE 6: CONFIRMACIÓN Y RESPUESTA FINAL
+       Propósito: Hacer permanentes los cambios y notificar al cliente.
+       ======================================================================================== */
+    COMMIT; -- Confirmamos la transacción. El registro desaparece permanentemente.
+
+    /* Retornamos un mensaje de éxito incluyendo el nombre del estatus borrado para confirmación visual */
+    SELECT CONCAT('ÉXITO: El Estatus "', v_Nombre_Estatus, '" ha sido eliminado permanentemente del sistema.') AS Mensaje,
+           'ELIMINADO_FISICO' AS Accion,
+           _Id_Estatus AS Id_Estatus;
+
+END$$
+
+DELIMITER ;
+
+
+/* ====================================================================================================
+   PROCEDIMIENTO: SP_EliminarModalidadCapacitacionFisico
+   ====================================================================================================
+
+   ----------------------------------------------------------------------------------------------------
+   I. FILOSOFÍA DE DISEÑO Y CONTEXTO ESTRATÉGICO (DATA GOVERNANCE)
+   ----------------------------------------------------------------------------------------------------
+   [QUÉ ES]:
+   Este procedimiento representa el nivel máximo de autoridad administrativa en el ciclo de vida de los 
+   datos: la "Eliminación Dura" (Hard Delete). Su ejecución implica la destrucción física de los 
+   registros en las páginas de datos del disco duro para la tabla `Cat_Modalidad_Capacitacion`.
+
+   [JUSTIFICACIÓN DE LA RIGIDEZ]:
+   En un sistema de grado industrial, la información no es solo "texto", es una cadena de custodia. 
+   Eliminar una modalidad que alguna vez fue utilizada es equivalente a borrar un eslabón en una cadena 
+   de auditoría. Si borramos la modalidad "PRESENCIAL" y existen cursos históricos ligados a ella, 
+   estamos creando "Datos Fantasma" o registros huérfanos que harían que los reportes de BI 
+   (Business Intelligence) y las auditorías de cumplimiento (SSPA/PEMEX) fallen por inconsistencia.
+
+   [DIFERENCIACIÓN DE PROCESOS]:
+   1. BAJA LÓGICA (SP_CambiarEstatus...): Es la operación estándar. El dato se oculta pero se preserva 
+      la integridad histórica. "El registro existió, pero ya no está disponible".
+   2. BAJA FÍSICA (Este Procedimiento): Es una operación quirúrgica de limpieza. Su único fin es 
+      eliminar errores de captura que JAMÁS llegaron a tener vida operativa (ej. creaste un registro 
+      por error y lo borras 1 minuto después).
+
+   ----------------------------------------------------------------------------------------------------
+   II. MATRIZ DE RIESGOS Y REGLAS DE BLINDAJE (INTEGRITY ARCHITECTURE)
+   ----------------------------------------------------------------------------------------------------
+   [RN-01] CANDADO HISTÓRICO ABSOLUTO (THE FORENSIC GUARD):
+      - Principio: "Inmutabilidad del Rastro Operativo".
+      - Regla de Negocio: Queda terminantemente PROHIBIDO el borrado físico si el registro aparece como 
+        Foreign Key (FK) en la tabla de hechos `DatosCapacitaciones`.
+      - Alcance Forense: El escaneo es agnóstico al estatus. No importa si el curso hijo está 
+        'Activo', 'Cancelado', 'Finalizado' o 'Eliminado Lógicamente'. Si el ID de la modalidad 
+        está en la tabla de hechos, el padre no puede ser destruido físicamente.
+
+   [RN-02] ATOMICIDAD TRANSACCIONAL Y SERIALIZACIÓN (ACID):
+      - Mecanismo: Implementación de Bloqueo Pesimista (`FOR UPDATE`).
+      - Objetivo: Evitar la "Carrera de Destrucción". Esto impide que un Usuario A valide que no hay 
+        hijos mientras un Usuario B crea un hijo nuevo en el microsegundo exacto antes del DELETE.
+      - Nivel de Aislamiento: Se fuerza un comportamiento SERIALIZABLE para este recurso específico.
+
+   [RN-03] DEFENSA EN PROFUNDIDAD (LAYERED DEFENSE):
+      - Capa 1 (Aplicación): El SP valida el ID y la existencia del registro.
+      - Capa 2 (Negocio): El SP escanea manualmente las tablas dependientes (`COUNT`).
+      - Capa 3 (Motor): El Handler de MySQL para el error 1451 atrapa cualquier dependencia oculta 
+        definida a nivel de esquema (Constraints).
+
+   ----------------------------------------------------------------------------------------------------
+   III. ESPECIFICACIÓN TÉCNICA DE ALTO NIVEL
+   ----------------------------------------------------------------------------------------------------
+   - TIPO: Destructivo / Atómico.
+   - INPUT: _Id_Modalidad (INT).
+   - OUTPUT: Resultset detallado con { Mensaje, Accion, Id_Eliminado }.
+   - IMPACTO EN RENDIMIENTO: Al realizar un scan sobre `DatosCapacitaciones`, se recomienda que la 
+     columna `Fk_Id_CatModalCap` en dicha tabla tenga un ÍNDICE activo para garantizar velocidad O(log n).
+
+   ----------------------------------------------------------------------------------------------------
+   IV. CONTRATO DE RESPUESTA (API SPEC)
+   ----------------------------------------------------------------------------------------------------
+   El procedimiento garantiza retornar siempre un resultado legible, evitando que el Frontend 
+   tenga que lidiar con excepciones crípticas de la base de datos.
+   ==================================================================================================== */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarModalidadCapacitacionFisico`$$
+
+CREATE PROCEDURE `SP_EliminarModalidadCapacitacionFisico`(
+    /* -----------------------------------------------------------------
+       PARÁMETRO DE ENTRADA (INPUT)
+       El identificador único que será el objetivo de la purga.
+       ----------------------------------------------------------------- */
+    IN _Id_Modalidad INT 
+)
+THIS_PROC: BEGIN
+
+    /* ========================================================================================
+       BLOQUE 0: DECLARACIÓN DE VARIABLES DE ESTADO Y CONTROL
+       Propósito: Reservar espacio en memoria para los diagnósticos de integridad.
+       ======================================================================================== */
+    
+    /* [Snapshot de Identidad]:
+       Almacenamos el nombre antes de borrarlo para poder informarlo en el mensaje de éxito. */
+    DECLARE v_Nombre_Modalidad VARCHAR(255) DEFAULT NULL;
+    
+    /* [Semáforo de Integridad]:
+       Contador forense para medir el uso histórico del registro en el sistema operativo. */
+    DECLARE v_Referencias_Historicas INT DEFAULT 0;
+
+    /* [Bandera de Existencia]:
+       Variable booleana auxiliar para el bloqueo pesimista. */
+    DECLARE v_Existe INT DEFAULT NULL;
+
+    /* ========================================================================================
+       BLOQUE 1: HANDLERS DE EMERGENCIA (THE SAFETY NET)
+       Propósito: Capturar errores nativos del motor InnoDB y darles un tratamiento humano.
+       ======================================================================================== */
+    
+    /* [1.1] Handler para Error 1451 (Cannot delete or update a parent row: a foreign key constraint fails)
+       Este es el cinturón de seguridad de la base de datos. Si nuestra validación lógica (Bloque 4) 
+       fallara o si se agregaran nuevas tablas en el futuro sin actualizar este SP, el motor de BD 
+       bloqueará el borrado. Este handler captura ese evento, deshace la transacción y da feedback. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; -- Crucial: Liberar cualquier lock adquirido.
+        SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'BLOQUEO DE MOTOR [1451]: Integridad Referencial Estricta detectada. La base de datos impidió la eliminación física porque existen vínculos en tablas del sistema (FK) no contempladas en la validación de negocio.'; 
+    END;
+
+    /* [1.2] Handler Genérico (Catch-All Exception)
+       Objetivo: Capturar cualquier anomalía técnica (disco lleno, pérdida de conexión, etc.). */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; -- Reenvía el error original para ser logueado por el Backend.
+    END;
+
+    /* ========================================================================================
+       BLOQUE 2: PROTOCOLO DE VALIDACIÓN PREVIA (FAIL FAST)
+       Propósito: Identificar peticiones inválidas antes de comprometer recursos de servidor.
+       ======================================================================================== */
+    
+    /* 2.1 Validación de Tipado e Integridad de Entrada:
+       Un ID nulo o negativo es una anomalía de la aplicación cliente que no debe procesarse. */
+    IF _Id_Modalidad IS NULL OR _Id_Modalidad <= 0 THEN
+        SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'ERROR DE PROTOCOLO [400]: El Identificador de Modalidad proporcionado es inválido o nulo.';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 3: INICIO DE TRANSACCIÓN Y SECUESTRO DE FILA (X-LOCK)
+       Propósito: Aislar el registro objetivo para asegurar que la destrucción sea atómica.
+       ======================================================================================== */
+    START TRANSACTION;
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 3.1: LECTURA CON BLOQUEO EXCLUSIVO (FOR UPDATE)
+       
+       Lógica Técnica:
+       No basta con un SELECT simple. El uso de `FOR UPDATE` garantiza que:
+       1. Si el registro existe, queda bloqueado para lectura/escritura de otros usuarios.
+       2. Evitamos que otro Admin lo "use" para crear una capacitación mientras estamos 
+          en medio del proceso de borrado.
+       ---------------------------------------------------------------------------------------- */
+    
+    SELECT 1, `Nombre` 
+    INTO v_Existe, v_Nombre_Modalidad
+    FROM `Cat_Modalidad_Capacitacion`
+    WHERE `Id_CatModalCap` = _Id_Modalidad
+    LIMIT 1
+    FOR UPDATE;
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 3.2: VALIDACIÓN DE EXISTENCIA REAL (IDEMPOTENCIA DE BORRADO)
+       Si v_Existe es NULL, el registro ya no existe (pudo ser borrado por otro Admin en paralelo).
+       ---------------------------------------------------------------------------------------- */
+    IF v_Existe IS NULL THEN
+        ROLLBACK; -- Liberamos la transacción.
+        SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: La Modalidad que intenta eliminar no existe en el catálogo (probablemente ya fue purgada).';
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 4: ANÁLISIS FORENSE DE IMPACTO (HISTORICAL DEPENDENCY SCAN)
+       Propósito: Validar que el registro no tenga rastro histórico en la base de datos operativa.
+       ======================================================================================== */
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 4.1: ESCANEO DE LA TABLA DE HECHOS (`DatosCapacitaciones`)
+       
+       Justificación Forense:
+       La tabla `DatosCapacitaciones` es el corazón de la operación. Cualquier vínculo aquí 
+       significa que la modalidad fue parte de un proceso de negocio.
+       
+       Regla Diamante:
+       Se utiliza un escaneo TOTAL. No filtramos por `Activo = 1`. 
+       Incluso si el curso hijo está borrado lógicamente, la relación física FK persiste en la BD.
+       Borrar el padre causaría un error de integridad referencial insalvable.
+       ---------------------------------------------------------------------------------------- */
+    
+    SELECT COUNT(*) INTO v_Referencias_Historicas
+    FROM `DatosCapacitaciones`
+    WHERE `Fk_Id_CatModalCap` = _Id_Modalidad;
+
+    /* ----------------------------------------------------------------------------------------
+       PASO 4.2: EVALUACIÓN DEL CANDADO DE INTEGRIDAD
+       Si el contador es mayor a cero, el registro es INBORRABLE.
+       ---------------------------------------------------------------------------------------- */
+    IF v_Referencias_Historicas > 0 THEN
+        
+        ROLLBACK; -- Cancelamos la destrucción. Liberamos los bloqueos de fila.
+        
+        /* Construimos un mensaje explicativo que guíe al administrador hacia la solución correcta */
+        SET @ErrorMsg = CONCAT('BLOQUEO DE INTEGRIDAD [409]: Imposible eliminar físicamente la Modalidad "', v_Nombre_Modalidad, '". Se detectaron ', v_Referencias_Historicas, ' registros históricos que dependen de este identificador. Para proteger la integridad de los reportes y auditorías, utilice la opción de "DESACTIVAR" (Baja Lógica) en su lugar.');
+        
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = @ErrorMsg;
+    END IF;
+
+    /* ========================================================================================
+       BLOQUE 5: EJECUCIÓN DE LA PURGA (HARD DELETE)
+       Propósito: Eliminar físicamente la fila una vez superados todos los controles de seguridad.
+       ======================================================================================== */
+    
+    /* Si el flujo de ejecución alcanza este punto, el sistema ha certificado bajo lock que:
+       1. El registro existe.
+       2. El registro es "VIRGEN" (Sin descendencia ni historial).
+       3. No hay riesgos de orfandad de datos. */
+       
+    DELETE FROM `Cat_Modalidad_Capacitacion`
+    WHERE `Id_CatModalCap` = _Id_Modalidad;
+
+    /* ========================================================================================
+       BLOQUE 6: CONFIRMACIÓN DE OPERACIÓN Y DESCARGA DE RESPUESTA
+       Propósito: Sellar los cambios en el disco y notificar al cliente.
+       ======================================================================================== */
+    
+    /* El comando COMMIT:
+       1. Hace permanentes los cambios en los platos del disco duro.
+       2. Genera la entrada final en el REDO LOG de la base de datos.
+       3. Libera el bloqueo exclusivo (X-Lock), permitiendo que el espacio sea reutilizado por InnoDB. */
+    COMMIT;
+
+    /* Retornamos el contrato de salida estructurado para la interfaz de usuario. */
+    SELECT 
+        CONCAT('ÉXITO: La Modalidad "', v_Nombre_Modalidad, '" ha sido eliminada permanentemente y todos sus recursos han sido liberados.') AS Mensaje,
+        'ELIMINACION_FISICA_COMPLETA' AS Accion,
+        _Id_Modalidad AS Id_Eliminado,
+        NOW() AS Timestamp_Ejecucion;
+
+END$$
+
+DELIMITER ;
+
+
+/* ====================================================================================================
+   PROCEDIMIENTOS: SP_EliminarEstatusParticipanteFisico (Hard Delete / Purga)
+   ====================================================================================================
+
+   ----------------------------------------------------------------------------------------------------
+   I. MANIFIESTO DE SEGURIDAD Y PROPÓSITO (THE SAFETY MANIFESTO)
+   ----------------------------------------------------------------------------------------------------
+   [DEFINICIÓN DEL COMPONENTE]:
+   Este procedimiento almacenado implementa el mecanismo de **Eliminación Física** (`DELETE`) para un 
+   registro del catálogo `Cat_Estatus_Participante`. A diferencia de la desactivación lógica 
+   (`SP_CambiarEstatus`), esta operación elimina los bits de datos del disco duro de manera permanente. 
+   No existe posibilidad de recuperación ("Rollback") una vez confirmado el `COMMIT`.
+
+   [CASO DE USO LEGÍTIMO - "DATA HYGIENE"]:
+   Esta herramienta está diseñada EXCLUSIVAMENTE para la **Corrección de Errores de Captura Inmediata** (Saneamiento de Datos).
+   
+   * Escenario Válido: El administrador crea el estatus "Aprovado" (con error ortográfico). Se da cuenta 
+     al instante (T < 1 min). Nadie lo ha usado aún. En lugar de desactivarlo y dejar "basura" en la BD, 
+     se utiliza este SP para purgarlo y mantener el catálogo impoluto.
+
+   [LA REGLA DE "CERO TOLERANCIA" (ZERO TOLERANCE POLICY)]:
+   Para garantizar la Integridad Referencial Dura (Hard Referential Integrity), este SP aplica la regla 
+   más estricta del sistema de bases de datos relacionales:
+   
+   > "Un Padre no puede ser eliminado si tiene siquiera un Hijo, vivo, muerto o archivado."
+
+   [DIFERENCIA CRÍTICA CON SOFT DELETE]:
+   - Soft Delete: Permite apagar un estatus si el curso ya terminó. (Preserva la historia).
+   - Hard Delete: Bloquea la eliminación si existe CUALQUIER registro histórico. (Protege la integridad).
+   
+   No importa si el curso donde se usó está "Activo", "Cancelado", "Finalizado" o "Archivado". 
+   Si existe una sola fila en la tabla `Capacitaciones_Participantes` vinculada a este estatus, 
+   la eliminación se bloquea. Borrarlo rompería la llave foránea (FK) y corrompería el historial 
+   académico de los participantes.
+
+   ----------------------------------------------------------------------------------------------------
+   II. MATRIZ DE REGLAS DE BLINDAJE (DESTRUCTIVE RULES MATRIX)
+   ----------------------------------------------------------------------------------------------------
+   [RN-01] VERIFICACIÓN DE EXISTENCIA PREVIA (FAIL FAST PATTERN):
+      - Principio: "No intentar matar lo que ya está muerto".
+      - Mecanismo: Validamos que el registro exista antes de intentar borrarlo.
+      - Beneficio: Permite devolver un error 404 (Not Found) preciso, en lugar de un mensaje genérico 
+        de "0 filas afectadas".
+
+   [RN-02] BLOQUEO DE RECURSO (PESSIMISTIC CONCURRENCY LOCK):
+      - Principio: "Aislamiento Serializable".
+      - Mecanismo: Se adquiere un bloqueo exclusivo (`FOR UPDATE`) sobre la fila a borrar al inicio 
+        de la transacción.
+      - Justificación: Esto evita la "Condición de Carrera" (Race Condition) donde el Usuario A 
+        intenta borrar el estatus mientras el Usuario B le asigna un alumno en el mismo milisegundo.
+
+   [RN-03] ESCANEO DE DEPENDENCIAS TOTALES (TOTAL FORENSIC SCAN):
+      - Principio: "Integridad sobre Conveniencia".
+      - Mecanismo: Se consulta `Capacitaciones_Participantes` sin filtros de estado.
+      - Condición: `COUNT(*) > 0`.
+      - Acción: Si se encuentra cualquier uso (histórico o actual), se aborta con Error 409.
+      
+   [RN-04] PROTECCIÓN DE MOTOR (LAST LINE OF DEFENSE):
+      - Principio: "Defensa en Profundidad".
+      - Mecanismo: Si fallara la validación lógica manual (RN-03), el `HANDLER 1451` captura el error 
+        nativo de Foreign Key de MySQL.
+      - Beneficio: Evita que el usuario final vea errores técnicos crípticos del motor SQL.
+
+   ----------------------------------------------------------------------------------------------------
+   III. ESPECIFICACIÓN TÉCNICA (TECHNICAL SPECS)
+   ----------------------------------------------------------------------------------------------------
+   - INPUT: `_Id_Estatus` (INT).
+   - OUTPUT: JSON { Mensaje, Accion, Id_Eliminado }.
+   - LOCKING STRATEGY: `X-Lock` (Exclusive Row Lock) via InnoDB.
+   - ISOLATION LEVEL: Read Committed (por defecto) elevado a Serializable para la fila objetivo.
+   ==================================================================================================== */
+
+DELIMITER $$
+
+-- DROP PROCEDURE IF EXISTS `SP_EliminarEstatusParticipanteFisico`$$
+
+CREATE PROCEDURE `SP_EliminarEstatusParticipanteFisico`(
+    /* -----------------------------------------------------------------
+       PARÁMETROS DE ENTRADA (INPUT LAYER)
+       Recibe el identificador atómico del recurso a destruir.
+       ----------------------------------------------------------------- */
+    IN _Id_Estatus INT -- [OBLIGATORIO] ID único (PK) del estatus a purgar.
+)
+THIS_PROC: BEGIN
+    
+    /* ============================================================================================
+       SECCIÓN A: DECLARACIÓN DE VARIABLES Y CONTEXTO (VARIABLE SCOPE)
+       Inicialización de contenedores de memoria para el diagnóstico forense.
+       ============================================================================================ */
+    
+    /* [Variable de Evidencia]: 
+       Almacena el nombre del registro antes de borrarlo. 
+       Se usa para confirmar al usuario QUÉ fue lo que eliminó en el mensaje de éxito. */
+    DECLARE v_Nombre_Actual VARCHAR(255);
+    
+    /* [Semáforo de Integridad]: 
+       Variable crítica. Almacena el conteo de referencias encontradas en tablas hijas.
+       Si > 0, es un bloqueo absoluto. */
+    DECLARE v_Dependencias_Totales INT DEFAULT 0;
+    
+    /* [Buffer de Mensajería]: 
+       Para construir mensajes de error dinámicos y detallados en tiempo de ejecución. */
+    DECLARE v_Mensaje_Error TEXT;
+
+    /* ============================================================================================
+       SECCIÓN B: HANDLERS DE SEGURIDAD (EXCEPTION HANDLING LAYER)
+       Configuración de la "Red de Seguridad" para atrapar errores del motor de base de datos.
+       ============================================================================================ */
+    
+    /* [B.1] Handler de Integridad Referencial (Error MySQL 1451)
+       OBJETIVO: Actuar como "Paracaídas". 
+       ESCENARIO: Si agregamos una nueva tabla en el futuro que use este estatus y olvidamos 
+       actualizar la validación manual de este SP, el motor bloqueará el DELETE.
+       ACCIÓN: Este handler atrapa ese bloqueo técnico y devuelve un mensaje humano. */
+    DECLARE EXIT HANDLER FOR 1451 
+    BEGIN 
+        ROLLBACK; -- Deshacer transacción inmediatamente.
+        SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'BLOQUEO DE SISTEMA [1451]: La base de datos impidió la eliminación porque existen vínculos en tablas del sistema no detectados por la lógica de negocio (Integridad Referencial).'; 
+    END;
+
+    /* [B.2] Handler Genérico (SQLEXCEPTION)
+       OBJETIVO: Capturar fallos de infraestructura (Disco lleno, Timeout, Conexión caída). */
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+    BEGIN 
+        ROLLBACK; 
+        RESIGNAL; -- Propagar el error original al backend para logs de sistema.
+    END;
+
+    /* ============================================================================================
+       SECCIÓN C: VALIDACIONES PREVIAS (FAIL FAST STRATEGY)
+       Filtrado de peticiones inválidas antes de iniciar transacciones costosas.
+       ============================================================================================ */
+    
+    /* [C.1] Validación de Integridad de Entrada (Type Safety)
+       Asegura que el ID sea un número positivo. */
+    IF _Id_Estatus IS NULL OR _Id_Estatus <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE SISTEMA [400]: ID de Estatus inválido o nulo. Verifique la petición.';
+    END IF;
+
+    /* ============================================================================================
+       SECCIÓN D: INICIO DE TRANSACCIÓN Y BLOQUEO (ACID TRANSACTION START)
+       A partir de aquí, las operaciones son atómicas y aisladas.
+       ============================================================================================ */
+    START TRANSACTION;
+
+    /* --------------------------------------------------------------------------------------------
+       PASO D.1: IDENTIFICACIÓN Y BLOQUEO PESIMISTA (PESSIMISTIC LOCKING)
+       
+       
+       [ESTRATEGIA TÉCNICA]:
+       Ejecutamos `SELECT ... FOR UPDATE`.
+       
+       [IMPACTO EN EL MOTOR]:
+       InnoDB adquiere un "Exclusive Lock (X)" sobre la fila específica en el índice primario.
+       
+       [JUSTIFICACIÓN DE NEGOCIO]:
+       Estamos "secuestrando" el registro. Mientras esta transacción esté viva, nadie más puede:
+         1. Asignar este estatus a un alumno (INSERT en tabla hija).
+         2. Modificar este estatus (UPDATE).
+         3. Borrar este estatus (DELETE concurrente).
+       Esto garantiza que nuestro escaneo de dependencias sea válido hasta el final.
+       -------------------------------------------------------------------------------------------- */
+    SELECT `Nombre` INTO v_Nombre_Actual
+    FROM `Cat_Estatus_Participante`
+    WHERE `Id_CatEstPart` = _Id_Estatus
+    LIMIT 1
+    FOR UPDATE;
+
+    /* [D.2] Validación de Existencia (404 Check)
+       Si la variable sigue siendo NULL, el registro no existe físicamente. */
+    IF v_Nombre_Actual IS NULL THEN
+        ROLLBACK; -- Liberar recursos.
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERROR DE NEGOCIO [404]: El Estatus no existe o ya fue eliminado previamente.';
+    END IF;
+
+    /* ============================================================================================
+       SECCIÓN E: ESCANEO DE DEPENDENCIAS (LA REGLA DE CERO TOLERANCIA)
+       Aquí reside la diferencia crítica con el Soft Delete.
+       ============================================================================================ */
+    
+    /* --------------------------------------------------------------------------------------------
+       PASO E.1: CONSULTA DE USO HISTÓRICO TOTAL (FORENSIC SCAN)
+       
+       [ANÁLISIS DE LA CONSULTA]:
+       1. TARGET: Tabla `Capacitaciones_Participantes` (La tabla de hechos).
+       2. FILTRO: `Fk_Id_CatEstPart` = ID Objetivo.
+       3. SCOPE: **GLOBAL**. 
+          - NO hacemos JOIN con `DatosCapacitaciones`.
+          - NO preguntamos si el curso está activo (`Activo=1`).
+          - NO preguntamos si el curso finalizó (`Es_Final=1`).
+          - NO preguntamos si el curso fue borrado (`Activo=0`).
+       
+       [FILOSOFÍA]: "Si existe un registro hijo, el padre es inmortal".
+       Incluso si el curso fue borrado hace 10 años, la integridad referencial física de la BD 
+       exige que la llave foránea apunte a algo existente. Borrar el padre dejaría un "Hijo Huérfano"
+       o rompería el constraint físico.
+       -------------------------------------------------------------------------------------------- */
+    SELECT COUNT(*) INTO v_Dependencias_Totales
+    FROM `Capacitaciones_Participantes`
+    WHERE `Fk_Id_CatEstPart` = _Id_Estatus;
+
+    /* --------------------------------------------------------------------------------------------
+       PASO E.2: EVALUACIÓN DE BLOQUEO (DECISION GATE)
+       Si el contador es > 0, se activa el protocolo de rechazo.
+       -------------------------------------------------------------------------------------------- */
+    IF v_Dependencias_Totales > 0 THEN
+        
+        ROLLBACK; -- Liberar el bloqueo y cancelar la transacción inmediatamente.
+        
+        /* Construcción del Mensaje Humano:
+           Explicamos claramente al usuario la razón técnica del bloqueo. */
+        SET v_Mensaje_Error = CONCAT(
+            'BLOQUEO DE INTEGRIDAD REFERENCIAL [409]: Operación Denegada. ',
+            'No es posible ELIMINAR FÍSICAMENTE el estatus "', v_Nombre_Actual, '". ',
+            'El sistema detectó ', v_Dependencias_Totales, ' registros históricos de participantes asociados a este estatus. ',
+            'Nota Técnica: Aunque los cursos hayan finalizado, estén archivados o borrados, la integridad de la base de datos impide borrar un catálogo con historial. ',
+            'SOLUCIÓN: Utilice la opción de "Desactivar" (Baja Lógica) en su lugar.'
+        );
+                               
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_Mensaje_Error;
+    END IF;
+
+    /* ============================================================================================
+       SECCIÓN F: EJECUCIÓN DESTRUCTIVA (HARD DELETE EXECUTION)
+       Si el flujo llega a este punto, hemos certificado que el registro está "limpio", "virgen" 
+       y "solo". Es seguro proceder con la destrucción.
+       ============================================================================================ */
+    
+    /* [F.1] Ejecución del Comando de Borrado
+       Esta instrucción elimina la fila de la página de datos del disco. */
+    DELETE FROM `Cat_Estatus_Participante`
+    WHERE `Id_CatEstPart` = _Id_Estatus;
+
+    /* ============================================================================================
+       SECCIÓN G: CONFIRMACIÓN Y RESPUESTA (COMMIT & FEEDBACK)
+       Finalización exitosa del protocolo.
+       ============================================================================================ */
+    
+    /* [G.1] Confirmación de Transacción (COMMIT)
+       Hacemos permanentes los cambios. 
+       - El registro deja de existir.
+       - El bloqueo (X-Lock) se libera.
+       - El espacio en disco se marca como disponible. */
+    COMMIT;
+
+    /* [G.2] Respuesta Estructurada al Frontend
+       Devolvemos un objeto JSON-like para que la UI pueda actualizarse (ej: quitar la fila de la tabla). */
+    SELECT 
+        CONCAT('ÉXITO: El Estatus "', v_Nombre_Actual, '" ha sido ELIMINADO permanentemente del sistema.') AS Mensaje,
+        'ELIMINACION_FISICA_COMPLETA' AS Accion,
+        _Id_Estatus AS Id_Estatus_Eliminado,
+        NOW() AS Fecha_Ejecucion;
+
+END$$
+
+DELIMITER ;
+

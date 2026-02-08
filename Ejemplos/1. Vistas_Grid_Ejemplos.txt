@@ -1,0 +1,1421 @@
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   1. VIEW: Vista_Direcciones
+   ======================================================================================================
+   OBJETIVO GENERAL
+   ----------------
+   Proporcionar una representación "aplanada" y desnormalizada de la jerarquía geográfica completa:
+       Municipio (Hijo) -> Estado (Padre) -> País (Abuelo)
+   
+   Esta vista actúa como la fuente de verdad única para cualquier consulta que requiera mostrar
+   la ubicación de una entidad en el sistema.
+
+   CASOS DE USO (¿DÓNDE SE CONSUME?)
+   ---------------------------------
+   1. Buscadores Globales: Permite buscar "Tabasco" y encontrar todos los municipios relacionados sin hacer JOINs manuales.
+   2. Reportes: Para encabezados de reportes oficiales de PEMEX que exigen "Lugar: Municipio, Estado, País".
+   3. Dropdowns en Cascada: Facilita la precarga de datos en formularios de edición (aunque los SPs específicos son preferibles para rendimiento crítico).
+   4. Tablas de Administración (CRUDs): Muestra la ubicación legible en lugar de IDs numéricos.
+
+   DECISIONES DE DISEÑO Y ARQUITECTURA
+   -----------------------------------
+   A) INNER JOIN vs LEFT JOIN:
+      - Se utilizan INNER JOINS estrictos.
+      - Razón: Por regla de negocio e integridad referencial, NO puede existir un Municipio sin Estado,
+        ni un Estado sin País. Si un dato rompe esta regla, se considera corrupto y no debe aparecer
+        en esta vista estándar.
+
+   B) FILTRADO DE ESTATUS (ACTIVO/INACTIVO):
+      - La vista NO filtra por `Activo = 1`. Devuelve TODO el historial.
+      - Razón: Los paneles de administración necesitan ver registros inactivos para poder reactivarlos.
+      - El filtrado de "Solo Activos" se delega a la cláusula WHERE de quien consuma la vista.
+
+   C) ESTATUS EXPUESTO:
+      - El campo `Estatus` corresponde al nivel más bajo (Municipio), ya que es la unidad atómica
+        de ubicación.
+
+   DICCIONARIO DE DATOS (CAMPOS DEVUELTOS)
+   ---------------------------------------
+   [Nivel Municipio]
+   - Id_Municipio:      Llave primaria del municipio.
+   - Codigo_Municipio:  Clave oficial (ej: '004').
+   - Nombre_Municipio:  Nombre descriptivo (ej: 'CENTRO').
+   
+   [Nivel Estado]
+   - Codigo_Estado:     Clave oficial (ej: 'TAB').
+   - Nombre_Estado:     Nombre descriptivo (ej: 'TABASCO').
+   
+   [Nivel País]
+   - Codigo_Pais:       Clave oficial (ej: 'MEX').
+   - Nombre_Pais:       Nombre descriptivo (ej: 'MÉXICO').
+   
+   [Metadatos]
+   - Estatus:           1 = Visible/Activo, 0 = Borrado Lógico (del Municipio).
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Direcciones`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Direcciones` AS
+    SELECT 
+        `Mun`.`Id_Municipio` AS `Id_Municipio`,
+        `Mun`.`Codigo` AS `Codigo_Municipio`,
+        `Mun`.`Nombre` AS `Nombre_Municipio`,
+        `Est`.`Codigo` AS `Codigo_Estado`,
+        `Est`.`Nombre` AS `Nombre_Estado`,
+        `Pais`.`Codigo` AS `Codigo_Pais`,
+        `Pais`.`Nombre` AS `Nombre_Pais`,
+        `Mun`.`Activo` AS `Estatus`
+    FROM
+        ((`Picade`.`Municipio` `Mun`
+        JOIN `Picade`.`Estado` `Est` ON (`Mun`.`Fk_Id_Estado` = `Est`.`Id_Estado`))
+        JOIN `Picade`.`Pais` `Pais` ON (`Est`.`Fk_Id_Pais` = `Pais`.`Id_Pais`));
+
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   1. VIEW: Vista_Organizacion
+   ======================================================================================================
+   OBJETIVO GENERAL
+   ----------------
+   Exponer una vista "plana" con la jerarquía organizacional corporativa completa:
+       Gerencia (Nieto) -> Subdirección (Padre) -> Dirección (Abuelo)
+   
+   Sirve para evitar la repetición de triples JOINs en cada consulta del backend y frontend.
+
+   CASOS DE USO (¿DÓNDE SE CONSUME?)
+   ---------------------------------
+   1. Catálogo de Usuarios: Para mostrar a qué área pertenece un empleado.
+   2. Reportes de Capacitación: Para agrupar estadísticas por Dirección o Subdirección.
+   3. Pantallas de Administración: CRUDs de mantenimiento de catálogos.
+
+   DECISIONES DE DISEÑO Y ARQUITECTURA
+   -----------------------------------
+   A) ESTRATEGIA DE JOIN:
+      - INNER JOIN. Se asume integridad referencial estricta: Una Gerencia siempre pertenece a una
+        Subdirección y esta a una Dirección.
+
+   B) NORMALIZACIÓN DE NULOS:
+      - Las columnas `Clave` pueden venir como NULL dependiendo de la carga histórica de datos.
+      - La vista las devuelve tal cual (raw data). Si la UI requiere un texto por defecto (ej: "S/C"),
+        debe aplicarse en la capa de presentación o en el SELECT final usando COALESCE.
+
+   C) ESTATUS JERÁRQUICO:
+      - El campo `Activo_Gerencia` refleja el estatus del nivel hoja (Gerencia).
+      - Nota: No se expone el estatus de los padres aquí para mantener la vista ligera, pero quien
+        la consuma debe saber que una Gerencia Activa podría pertenecer a una Dirección Inactiva
+        (aunque los SPs de CRUD intentan prevenir esa inconsistencia).
+
+   DICCIONARIO DE DATOS (CAMPOS DEVUELTOS)
+   ---------------------------------------
+   [Nivel Gerencia]
+   - Id_Gerencia:       ID único (PK) de Cat_Gerencias_Activos.
+   - Clave_Gerencia:    Clave interna (ej: 'GER-RH'). Puede ser NULL.
+   - Nombre_Gerencia:   Nombre oficial.
+   
+   [Nivel Subdirección]
+   - Clave_Subdireccion: Clave interna.
+   - Nombre_Subdireccion: Nombre oficial.
+   
+   [Nivel Dirección]
+   - Clave_Direccion:   Clave interna (ej: 'DCAS').
+   - Nombre_Direccion:  Nombre oficial corporativo.
+   
+   [Metadatos]
+   - Activo_Gerencia:   1 = Activo, 0 = Inactivo (Borrado Lógico).
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Organizacion`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Organizacion` AS
+    SELECT 
+		`Geren`.`Id_CatGeren` AS `Id_Gerencia`, 
+		`Geren`.`Clave` AS `Clave_Gerencia`, 
+		`Geren`.`Nombre` AS `Nombre_Gerencia`, 
+		`Subdirec`.`Clave` AS `Clave_Subdireccion`, 
+		`Subdirec`.`Nombre` AS `Nombre_Subdireccion`, 
+		`Direc`.`Clave` AS `Clave_Direccion`, 
+		`Direc`.`Nombre` AS `Nombre_Direccion`, 
+		`Geren`.`Activo` AS `Activo_Gerencia`
+FROM
+	`Cat_Gerencias_Activos` AS `Geren`
+	INNER JOIN `Cat_Subdirecciones` AS `Subdirec` ON `Geren`.`Fk_Id_CatSubDirec` = `Subdirec`.`Id_CatSubDirec`
+	INNER JOIN	`Cat_Direcciones` AS `Direc` ON `Subdirec`.`Fk_Id_CatDirecc` = `Direc`.`Id_CatDirecc`;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   1. VIEW: Vista_Departamentos
+   ======================================================================================================
+   OBJETIVO GENERAL
+   ----------------
+   Consolidar la información operativa de los Departamentos con su información geográfica,
+   siguiendo el patrón de arquitectura modular establecido en el sistema.
+
+   ARQUITECTURA MODULAR (DRY - Don't Repeat Yourself)
+   --------------------------------------------------
+   En lugar de realizar múltiples JOINs hacia las tablas de Municipio, Estado y País, 
+   esta vista consume directamente `Vista_Direcciones`.
+   
+   Ventajas:
+   1. Consistencia: La forma de mostrar una ubicación es idéntica en Centros de Trabajo y Departamentos.
+   2. Mantenibilidad: Si cambia la estructura geográfica, solo se ajusta `Vista_Direcciones`.
+
+   DECISIÓN CRÍTICA DE SEGURIDAD (LEFT JOIN)
+   -----------------------------------------
+   Se utiliza **LEFT JOIN** para relacionar `Cat_Departamentos` con `Vista_Direcciones`.
+   
+   Justificación Técnica:
+   - Integridad de Visualización: Es posible que existan Departamentos históricos o migrados
+     con `Fk_Id_Municipio_CatDep` nulo o inválido.
+   - Si usáramos INNER JOIN, esos departamentos "huérfanos de ubicación" desaparecerían de los reportes
+     y grids de administración, volviéndose invisibles e incorregibles.
+   - Con LEFT JOIN, aseguramos que el Administrador vea TODOS los departamentos. Los que tengan
+     problemas de ubicación mostrarán campos geográficos en NULL, facilitando su detección y corrección.
+
+   DICCIONARIO DE DATOS (CAMPOS DEVUELTOS)
+   ---------------------------------------
+   [Entidad Principal: Departamento]
+   - Id_Departamento:       ID único (PK) para operaciones CRUD.
+   - Codigo_Departamento:   Clave interna (ej: 'DEP-RH-01').
+   - Nombre_Departamento:   Nombre oficial del departamento.
+   - Estatus_Departamento:  1 = Operativo, 0 = Baja Lógica.
+
+   [Datos Geográficos - Heredados de Vista_Direcciones]
+   - Codigo_Municipio, Nombre_Municipio
+   - Codigo_Estado, Nombre_Estado
+   - Codigo_Pais, Nombre_Pais
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Departamentos`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Departamentos` AS
+    SELECT 
+        /* --- Datos Propios del Departamento --- */
+        `Dep`.`Id_CatDep`            AS `Id_Departamento`,
+        `Dep`.`Codigo`               AS `Codigo_Departamento`,
+        `Dep`.`Nombre`               AS `Nombre_Departamento`, /* Corregido: Antes decía Codigo_Dep */
+        `Dep`.`Direccion_Fisica`     AS `Descripcion_Direccion_Dep`,
+                
+        /* --- Datos Geográficos Reutilizados (Modularidad) --- */
+        `Ubi`.`Codigo_Municipio`     AS `Codigo_Municipio`,
+        -- `Ubi`.`Nombre_Municipio`     AS `Nombre_Municipio`,
+        `Ubi`.`Codigo_Estado`        AS `Codigo_Estado`,
+        -- `Ubi`.`Nombre_Estado`        AS `Nombre_Estado`,
+        `Ubi`.`Codigo_Pais`          AS `Codigo_Pais`,
+        -- `Ubi`.`Nombre_Pais`          AS `Nombre_Pais`,
+		`Dep`.`Activo`               AS `Estatus_Departamento`
+    FROM
+        `Picade`.`Cat_Departamentos` `Dep`
+        /* LEFT JOIN Estratégico: Previene la desaparición de registros con ubicación corrupta */
+        LEFT JOIN `Picade`.`Vista_Direcciones` `Ubi` 
+            ON `Dep`.`Fk_Id_Municipio_CatDep` = `Ubi`.`Id_Municipio`;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   1. VIEW: Vista_Centros_Trabajo
+   ======================================================================================================
+   OBJETIVO GENERAL
+   ----------------
+   Consolidar la información operativa de los Centros de Trabajo (CT) con su información geográfica,
+   implementando un patrón de **Reutilización de Vistas** (DRY - Don't Repeat Yourself).
+
+   ARQUITECTURA MODULAR
+   --------------------
+   En lugar de repetir los JOINs a Municipio, Estado y País, esta vista hace un JOIN directo
+   con `Vista_Direcciones`.
+   
+   Ventajas:
+   1. Mantenibilidad: Si cambia la lógica de cómo se muestra una dirección (ej: formato del país),
+      se actualiza `Vista_Direcciones` y automáticamente se refleja aquí.
+   2. Legibilidad: El código SQL es mucho más limpio y semántico.
+
+   DECISIÓN CRÍTICA DE SEGURIDAD (LEFT JOIN)
+   -----------------------------------------
+   Esta vista utiliza **LEFT JOIN** para unir `Cat_Centros_Trabajo` con `Vista_Direcciones`.
+   
+   ¿Por qué LEFT JOIN y no INNER JOIN?
+   -----------------------------------
+   - Integridad de Visualización (Safety Net): En procesos de migración de datos o cargas masivas históricas,
+     es posible que existan Centros de Trabajo con `Fk_Id_Municipio_CatCT` en NULL o apuntando a un ID inexistente.
+   - Si usáramos INNER JOIN, esos registros "sucios" desaparecerían de la vista, creando "registros fantasmas"
+     que el administrador no podría ver ni corregir.
+   - Con LEFT JOIN, garantizamos que el Admin vea TODOS los CTs. Los que tengan error de ubicación
+     mostrarán NULL en los campos geográficos, alertando visualmente que requieren corrección.
+
+   DICCIONARIO DE DATOS (CAMPOS DEVUELTOS)
+   ---------------------------------------
+   [Entidad Principal: Centro de Trabajo]
+   - Id_CentroTrabajo:          ID único (PK).
+   - Codigo_CT:                 Clave interna del centro (ej: 'CT-101').
+   - Nombre_CT:                 Nombre oficial.
+   - Descripcion_Direccion_CT:  Texto libre (Calle, Número, CP) para referencia humana.
+   
+   [Datos Geográficos - Heredados de Vista_Direcciones]
+   - Codigo_Municipio, Nombre_Municipio
+   - Codigo_Estado, Nombre_Estado
+   - Codigo_Pais, Nombre_Pais
+   
+   [Metadatos]
+   - Estatus_CT:                1 = Operativo, 0 = Baja Lógica.
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Centros_Trabajo`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Centros_Trabajo` AS
+    SELECT 
+        /* Datos Propios del Centro de Trabajo */
+        `CT`.`Id_CatCT`             AS `Id_CentroTrabajo`,
+        `CT`.`Codigo`               AS `Codigo_CT`,
+        `CT`.`Nombre`               AS `Nombre_CT`,
+        `CT`.`Direccion_Fisica`     AS `Descripcion_Direccion_CT`,
+        
+        /* Datos Geográficos Reutilizados (Modularidad) */
+        `Ubi`.`Codigo_Municipio`    AS `Codigo_Municipio`,
+        -- `Ubi`.`Nombre_Municipio`    AS `Nombre_Municipio`,
+        `Ubi`.`Codigo_Estado`       AS `Codigo_Estado`,
+        -- `Ubi`.`Nombre_Estado`       AS `Nombre_Estado`,
+        `Ubi`.`Codigo_Pais`         AS `Codigo_Pais`,
+        -- `Ubi`.`Nombre_Pais`         AS `Nombre_Pais`,
+        
+        /* Estatus */
+        `CT`.`Activo`               AS `Estatus_CT`
+    FROM
+        `Picade`.`Cat_Centros_Trabajo` `CT`
+        /* LEFT JOIN Estratégico: Permite visualizar CTs con errores de ubicación para su corrección */
+        LEFT JOIN `Picade`.`Vista_Direcciones` `Ubi` 
+            ON `CT`.`Fk_Id_Municipio_CatCT` = `Ubi`.`Id_Municipio`;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   1. VIEW: Vista_Sedes
+   ======================================================================================================
+   OBJETIVO GENERAL
+   ----------------
+   Consolidar el inventario de Sedes (Centros de Adiestramiento, Seguridad, Ecología y Supervivencia - CASES)
+   con su ubicación geográfica y capacidad instalada, sirviendo como la fuente de verdad única para
+   la administración y visualización operativa.
+
+   ARQUITECTURA MODULAR (DRY)
+   --------------------------
+   Esta vista implementa el patrón de reutilización al hacer JOIN con `Vista_Direcciones`.
+   Esto abstrae la complejidad de la jerarquía geográfica (Municipio -> Estado -> País) y garantiza
+   que cualquier cambio en la lógica de direcciones se propague automáticamente aquí.
+
+   DECISIÓN CRÍTICA DE DISEÑO (LEFT JOIN)
+   --------------------------------------
+   Se utiliza **LEFT JOIN** para relacionar `Cat_Cases_Sedes` con `Vista_Direcciones`.
+
+   Justificación Técnica:
+   - Integridad de Visualización (Safety Net): Aunque la tabla define `Fk_Id_Municipio` como NOT NULL,
+     es posible que en el futuro un municipio sea eliminado o desactivado, dejando a la sede "huérfana"
+     de ubicación lógica.
+   - Si usáramos INNER JOIN, esas sedes desaparecerían silenciosamente de los reportes.
+   - Con LEFT JOIN, aseguramos que el Administrador vea TODAS las sedes existentes. Las que tengan
+     problemas de ubicación mostrarán NULL en los campos geográficos (Nombre_Municipio, etc.),
+     facilitando la detección de anomalías.
+
+   DICCIONARIO DE DATOS (CAMPOS DEVUELTOS)
+   ---------------------------------------
+   [Entidad Principal: Sede / CASES]
+   - Id_Sedes:                   ID único (PK).
+   - Codigo_Sedes:               Clave interna (ej: 'CASES-01'). Puede ser NULL en datos históricos.
+   - Nombre_Sedes:               Nombre oficial descriptivo.
+   - Descripcion_Direccion_Sedes: Dirección física detallada (Calle, Número).
+
+   [Infraestructura / Capacidad Instalada]
+   - Capacidad_Total_Sedes:      Aforo máximo de personas.
+   - Aulas, Salas, Alberca, CampoPracticas_Escenario, Muelle_Entrenamiento_Botes, BoteSalvavida_Capacidad.
+     * Estos campos permiten filtrar qué sedes tienen ciertos recursos (ej: "Buscar sedes con Alberca").
+
+   [Datos Geográficos - Heredados de Vista_Direcciones]
+   - Codigo_Municipio, Nombre_Municipio
+   - Codigo_Estado, Nombre_Estado
+   - Codigo_Pais, Nombre_Pais
+
+   [Metadatos]
+   - Estatus_Sede:               1 = Operativo, 0 = Baja Lógica.
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Sedes`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Sedes` AS
+    SELECT 
+        /* --- Datos de Identidad --- */
+        `Cases`.`Id_CatCases_Sedes`          AS `Id_Sedes`,
+        `Cases`.`Codigo`                     AS `Codigo_Sedes`,
+        `Cases`.`Nombre`                     AS `Nombre_Sedes`,
+        `Cases`.`DescripcionDireccion`       AS `Descripcion_Direccion_Sedes`,
+        
+        /* --- Datos de Infraestructura (Inventario) --- */
+        `Cases`.`Capacidad_Total`            AS `Capacidad_Total_Sedes`,
+        /*`Cases`.`Aulas`,
+        `Cases`.`Salas`,
+        `Cases`.`Alberca`,
+        `Cases`.`CampoPracticas_Escenario`,
+        `Cases`.`Muelle_Entrenamiento_Botes`,
+        `Cases`.`BoteSalvavida_Capacidad`,*/
+
+        /* --- Datos Geográficos Reutilizados (Modularidad) --- */
+        `Ubi`.`Codigo_Municipio`,
+        `Ubi`.`Nombre_Municipio`,
+        `Ubi`.`Codigo_Estado`,
+        -- `Ubi`.`Nombre_Estado`,
+        `Ubi`.`Codigo_Pais`,
+        -- `Ubi`.`Nombre_Pais`,
+        
+        /* --- Metadatos de Control --- */
+        `Cases`.`Activo`                     AS `Estatus_Sede`
+    FROM
+        `Picade`.`Cat_Cases_Sedes` `Cases`
+        /* LEFT JOIN Estratégico: Garantiza visibilidad total incluso con fallos geográficos */
+        LEFT JOIN `Picade`.`Vista_Direcciones` `Ubi` 
+            ON `Cases`.`Fk_Id_Municipio` = `Ubi`.`Id_Municipio`;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   1. VIEW: Vista_Regimenes
+   ======================================================================================================
+   1. OBJETIVO TÉCNICO Y DE NEGOCIO
+   --------------------------------
+   Esta vista implementa la **Capa de Abstracción de Datos** (DAL) para la entidad "Regímenes de Trabajo".
+   Su propósito es desacoplar la estructura física de la base de datos (nombres de columnas, tipos de datos)
+   de la capa de presentación (Frontend) y lógica de negocio.
+
+   Actúa como la **Interfaz Canónica** de lectura. El Frontend nunca debe consultar la tabla 
+   `Cat_Regimenes_Trabajo` directamente; siempre debe consumir esta vista.
+
+   2. ARQUITECTURA DE DATOS (PATRÓN DE PROYECCIÓN)
+   -----------------------------------------------
+   Al ser una Entidad Raíz (Root Entity) dentro del modelo entidad-relación (no tiene llaves foráneas 
+   hacia padres), esta vista no requiere JOINs complejos. Sin embargo, su complejidad radica en la 
+   **Normalización Semántica**:
+   
+   - Renombramiento de Llaves (Aliasing): Transforma `Id_CatRegimen` a `Id_Regimen` para mantener un 
+     estándar de nomenclatura consistente en todos los endpoints del API (json: { id_regimen: 1 }).
+   
+   - Exposición de Auditoría: Proyecta los timestamps (`created_at`, `updated_at`) para permitir 
+     la trazabilidad de cambios sin exponer lógica interna de la base de datos.
+
+   3. GESTIÓN DE INTEGRIDAD Y NULOS
+   --------------------------------
+   - Campo `Codigo`: Dado que la carga histórica de datos permite valores NULL en el código, esta vista
+     devuelve el valor crudo (`raw`). 
+     * Razón de Diseño: No se utiliza `COALESCE` aquí para permitir que el Frontend detecte explícitamente 
+       la ausencia de código (NULL) y decida si mostrar un placeholder ("S/C") o dejar el campo vacío, 
+       manteniendo la vista agnóstica a la UI.
+
+   4. VISIBILIDAD DE ESTATUS (LÓGICA DE BORRADO)
+   ---------------------------------------------
+   - La vista expone **TODO el universo de datos** (Activos e Inactivos).
+   - Razón: Los módulos de administración requieren ver registros "eliminados lógicamente" (`Activo = 0`) 
+     para permitir operaciones de auditoría o reactivación. El filtrado de "Solo Activos" es responsabilidad 
+     del consumidor (WHERE Estatus_Regimen = 1).
+
+   5. DICCIONARIO DE DATOS (ESPECIFICACIÓN DE SALIDA)
+   --------------------------------------------------
+   [Bloque A: Identidad del Registro]
+   - Id_Regimen:          (INT) Identificador único y llave primaria.
+   - Codigo_Regimen:      (VARCHAR) Clave corta organizacional (ej: 'CONF', 'PLANTA'). Puede ser NULL.
+   - Nombre_Regimen:      (VARCHAR) Denominación oficial y única del régimen.
+   
+   [Bloque B: Información Descriptiva]
+   - Descripcion_Regimen: (VARCHAR) Detalles extendidos sobre las implicaciones del régimen.
+
+   [Bloque C: Control y Auditoría]
+   - Estatus_Regimen:     (TINYINT) Bandera booleana: 1 = Operativo/Visible, 0 = Baja Lógica/Oculto.
+   - created_at:          (DATETIME) Marca de tiempo de la creación inicial.
+   - updated_at:          (DATETIME) Marca de tiempo de la última modificación.
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Regimenes`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Regimenes` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD Y CLAVES
+           Estandarización de nombres para el consumo del API/Frontend.
+           ----------------------------------------------------------------------------------- */
+        `Reg`.`Id_CatRegimen`            AS `Id_Regimen`,
+        `Reg`.`Codigo`                   AS `Codigo_Regimen`,
+        `Reg`.`Nombre`                   AS `Nombre_Regimen`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: DETALLES INFORMATIVOS
+           Información complementaria no crítica para la integridad referencial.
+           ----------------------------------------------------------------------------------- */
+         -- `Reg`.`Descripcion`              AS `Descripcion_Regimen`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: METADATOS DE CONTROL DE CICLO DE VIDA
+           El campo 'Activo' se renombra a 'Estatus_Regimen' para mayor claridad semántica.
+           ----------------------------------------------------------------------------------- */
+        `Reg`.`Activo`                   AS `Estatus_Regimen`
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: AUDITORÍA DEL SISTEMA
+           Campos necesarios para logs de cambios y ordenamiento cronológico.
+           ----------------------------------------------------------------------------------- */
+        -- `Reg`.`created_at`,
+        -- `Reg`.`updated_at`
+
+    FROM
+        `Picade`.`Cat_Regimenes_Trabajo` `Reg`;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   VIEW: Vista_Regiones
+   ======================================================================================================
+   1. OBJETIVO TÉCNICO Y DE NEGOCIO
+   --------------------------------
+   Esta vista implementa la **Capa de Abstracción de Datos** (DAL) para la entidad "Regiones Operativas".
+   Su propósito es definir zonas geográficas o administrativas de alto nivel (ej: Región Norte, 
+   Región Marina, Sede Central) que agrupan múltiples Centros de Trabajo o Sedes.
+
+   Actúa como la **Interfaz Canónica** de lectura. El Frontend y los reportes nunca deben consultar 
+   la tabla `Cat_Regiones` directamente, sino consumir esta vista para garantizar estabilidad ante
+   cambios en el modelo físico.
+
+   2. ARQUITECTURA DE DATOS (PATRÓN DE PROYECCIÓN)
+   -----------------------------------------------
+   Al ser una Entidad Raíz (Root Entity) dentro del modelo entidad-relación (no tiene llaves foráneas 
+   hacia padres), esta vista no requiere JOINs complejos. Su valor radica en la **Normalización Semántica**:
+   
+   - Renombramiento de Llaves (Aliasing): Transforma `Id_CatRegion` a `Id_Region` para mantener un 
+     estándar de nomenclatura consistente (json: { id_region: 1 }).
+   
+   - Exposición de Auditoría: Proyecta los timestamps (`created_at`, `updated_at`) para permitir 
+     la trazabilidad de cambios en el panel administrativo sin exponer lógica interna.
+
+   3. GESTIÓN DE INTEGRIDAD Y NULOS
+   --------------------------------
+   - Campo `Codigo`: Se expone tal cual (Raw Data). Si es NULL, el consumidor (Frontend) decide 
+     si muestra un badge de "S/C" (Sin Código) o lo oculta.
+   - Campo `Descripcion`: Se incluye para dar contexto operativo sobre qué abarca esa región
+     (ej: "Comprende los estados de Tabasco y Veracruz").
+
+   4. VISIBILIDAD DE ESTATUS (LÓGICA DE BORRADO)
+   ---------------------------------------------
+   - La vista expone **TODO el universo de datos** (Activos e Inactivos).
+   - Razón: Los módulos de administración necesitan ver registros "eliminados lógicamente" (`Activo = 0`) 
+     para permitir operaciones de auditoría, reactivación o para filtrar reportes históricos.
+   - El filtrado de "Solo Activos" se delega al `WHERE` del consumidor o a los SPs de dropdowns.
+
+   5. DICCIONARIO DE DATOS (ESPECIFICACIÓN DE SALIDA)
+   --------------------------------------------------
+   [Bloque A: Identidad del Registro]
+   - Id_Region:           (INT) Identificador único y llave primaria.
+   - Codigo_Region:       (VARCHAR) Clave corta (ej: 'RM-NE'). Puede ser NULL.
+   - Nombre_Region:       (VARCHAR) Denominación oficial (ej: 'REGIÓN MARINA NORESTE').
+   
+   [Bloque B: Información Descriptiva]
+   - Descripcion_Region:  (VARCHAR) Detalles sobre el alcance geográfico/operativo de la región.
+
+   [Bloque C: Control y Auditoría]
+   - Estatus_Region:      (TINYINT) Bandera booleana: 1 = Operativo/Visible, 0 = Baja Lógica.
+   - created_at:          (DATETIME) Marca de tiempo de la creación inicial.
+   - updated_at:          (DATETIME) Marca de tiempo de la última modificación.
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Regiones`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Regiones` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD Y CLAVES
+           Estandarización de nombres para el consumo del API/Frontend.
+           ----------------------------------------------------------------------------------- */
+        `Reg`.`Id_CatRegion`             AS `Id_Region`,
+        `Reg`.`Codigo`                   AS `Codigo_Region`,
+        `Reg`.`Nombre`                   AS `Nombre_Region`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: DETALLES INFORMATIVOS
+           Información complementaria de alcance.
+           ----------------------------------------------------------------------------------- */
+        -- `Reg`.`Descripcion`              AS `Descripcion_Region`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: METADATOS DE CONTROL DE CICLO DE VIDA
+           El campo 'Activo' se renombra a 'Estatus_Region' para mayor claridad semántica.
+           ----------------------------------------------------------------------------------- */
+        `Reg`.`Activo`                   AS `Estatus_Region`
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: AUDITORÍA DEL SISTEMA
+           Campos necesarios para logs de cambios y ordenamiento cronológico.
+           ----------------------------------------------------------------------------------- */
+        -- `Reg`.`created_at`,
+        -- `Reg`.`updated_at`
+
+    FROM
+        `Picade`.`Cat_Regiones_Trabajo` `Reg`;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   VIEW  Vista_Puestos  
+   ======================================================================================================
+   
+   1. OBJETIVO TÉCNICO Y DE NEGOCIO (BUSINESS GOAL)
+   ------------------------------------------------
+   Esta vista implementa la **Capa de Abstracción de Lectura** (Data Abstraction Layer) para la entidad
+   "Puestos de Trabajo" (`Cat_Puestos_Trabajo`).
+   
+   Su función es actuar como la interfaz pública y canónica para todos los consumidores de datos
+   (API Backend, Reportes de BI, Dashboards Frontend), desacoplando la estructura física de la tabla
+   de su representación lógica.
+
+   2. ARQUITECTURA DE DATOS (PATRÓN DE PROYECCIÓN)
+   -----------------------------------------------
+   Al ser una Entidad de Catálogo Simple (Lookup Table) en la estructura actual (sin dependencias 
+   jerárquicas directas a nivel de base de datos), esta vista no requiere JOINs relacionales complejos.
+   
+   Su valor reside en la **Normalización Semántica**:
+   
+   - Aliasing (Renombramiento): Transforma nombres técnicos de columnas (`Id_CatPuesto`) a nombres
+     de negocio (`Id_Puesto`) para mantener la consistencia con el resto del sistema JSON 
+     (ej: { id_puesto: 1, nombre_puesto: "Medico" }).
+   
+   - Visibilidad Total: Proyecta tanto registros Activos como Inactivos para permitir la gestión
+     administrativa completa (Auditoría, Corrección y Reactivación).
+
+   3. GESTIÓN DE INTEGRIDAD Y NULOS
+   --------------------------------
+   - Campo `Codigo`: Se expone tal cual (Raw Data). Si es NULL, el consumidor (Frontend) decide
+     si muestra un badge de "S/C" (Sin Código) o lo oculta.
+   - Campo `Descripcion`: Se incluye para dar contexto operativo sobre las responsabilidades del cargo.
+
+   4. CONTEXTO DE USO
+   ------------------
+   Esta vista alimentará principalmente:
+   - Grid de Administración de Puestos (CRUD).
+   - Selectores de "Asignación de Puesto" en el Módulo de Personal (`Info_Personal`).
+   - Reportes de "Plantilla Laboral por Categoría".
+
+   5. DICCIONARIO DE DATOS (OUTPUT CONTRACT)
+   -----------------------------------------
+   [Bloque A: Identidad]
+   - Id_Puesto:          (INT) Llave Primaria única del catálogo.
+   - Codigo_Puesto:      (VARCHAR) Clave corta interna (ej: 'SUP-HSE-01'). Puede ser NULL.
+   - Nombre_Puesto:      (VARCHAR) Denominación oficial del cargo (ej: 'SUPERVISOR DE SEGURIDAD').
+
+   [Bloque B: Detalle Operativo]
+   - Descripcion_Puesto: (VARCHAR) Resumen de responsabilidades o alcance del cargo.
+
+   [Bloque C: Control de Ciclo de Vida]
+   - Estatus_Puesto:     (TINYINT) 1 = Vigente/Asignable, 0 = Obsoleto/Histórico (Baja Lógica).
+   - created_at:         (DATETIME) Fecha de alta en el sistema.
+   - updated_at:         (DATETIME) Última modificación o cambio de estatus.
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Puestos`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Puestos` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD Y CLAVES
+           Estandarización de nombres para el consumo del API/Frontend.
+           ----------------------------------------------------------------------------------- */
+        `Pto`.`Id_CatPuesto`      AS `Id_Puesto`,
+        `Pto`.`Codigo`            AS `Codigo_Puesto`,
+        `Pto`.`Nombre`            AS `Nombre_Puesto`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: DETALLES INFORMATIVOS
+           Información descriptiva para tooltips o detalles expandidos en reportes.
+           ----------------------------------------------------------------------------------- */
+         -- `Pto`.`Descripcion`       AS `Descripcion_Puesto`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: METADATOS DE CONTROL (ESTATUS)
+           Mapeo semántico: 'Activo' -> 'Estatus_Puesto' para mayor claridad funcional.
+           ----------------------------------------------------------------------------------- */
+        `Pto`.`Activo`            AS `Estatus_Puesto`
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: TRAZABILIDAD (AUDITORÍA)
+           Fechas críticas para el ordenamiento cronológico en los Grids administrativos.
+           (Descomentar si se requieren en el frontend, se dejan ocultas por defecto para ligereza)
+           ----------------------------------------------------------------------------------- */
+        -- `Pto`.`created_at`,
+        -- `Pto`.`updated_at`
+
+    FROM
+        `Picade`.`Cat_Puestos_Trabajo` `Pto`;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   VIEW: Vista_Roles
+   ======================================================================================================
+   1. OBJETIVO TÉCNICO Y ESTRATÉGICO
+   ---------------------------------
+   Esta vista constituye la **Interfaz Canónica de Seguridad** para el sistema PICADE. 
+   Su función principal es desacoplar la estructura física de la tabla `Cat_Roles` de la lógica de 
+   autenticación y autorización consumida por el Backend (Laravel) y el Frontend.
+
+   Al centralizar la lectura de roles aquí, garantizamos que cualquier cambio futuro en la tabla base 
+   (ej: agregar campos de auditoría extra) no rompa el módulo de login ni el middleware de permisos.
+
+   2. ARQUITECTURA DE DATOS (NORMALIZACIÓN SEMÁNTICA)
+   --------------------------------------------------
+   Siguiendo el patrón establecido en el sistema, esta vista aplica una normalización de nomenclatura 
+   para garantizar que el objeto JSON resultante sea autodocumentado:
+   
+   - Estandarización de Identificadores: `Id_Rol` se mantiene, pero se asegura su visibilidad clara.
+   - Nomenclatura de Negocio: Se transforman columnas genéricas como `Codigo` y `Nombre` a 
+     `Codigo_Rol` y `Nombre_Rol`. Esto evita colisiones de nombres cuando se realizan cruces (JOINs) 
+     con tablas de Usuarios (`Users`) en consultas complejas.
+
+   3. GESTIÓN DEL CICLO DE VIDA (SOFT DELETES)
+   -------------------------------------------
+   - Principio de Visibilidad Total: La vista expone **TODOS** los roles, tanto activos (`1`) como 
+     inactivos (`0`).
+   - Justificación de Seguridad: Un Administrador debe ser capaz de auditar qué usuarios tenían un rol 
+     que ha sido desactivado. Ocultar los roles inactivos en esta capa podría generar errores de 
+     integridad referencial en los reportes históricos de accesos.
+   - El filtrado para listas desplegables (ej: "Asignar Rol") debe realizarse en el `WHERE` del consumidor.
+
+   4. DICCIONARIO DE DATOS (CONTRATO DE SALIDA)
+   --------------------------------------------
+   [Bloque A: Identidad y Control de Acceso]
+   - Id_Rol:          (INT) Llave Primaria. Identificador único del permiso.
+   - Codigo_Rol:      (VARCHAR) Slug o Keyword técnico (ej: 'ADMIN_GRAL', 'SOPORTE'). 
+                      Vital para los Middlewares de autorización en código (ej: @can('ADMIN_GRAL')).
+   - Nombre_Rol:      (VARCHAR) Etiqueta legible para humanos (ej: 'Administrador General').
+
+   [Bloque B: Contexto]
+   - Descripcion_Rol: (VARCHAR) Explicación del alcance y limitaciones del rol.
+
+   [Bloque C: Metadatos de Estado]
+   - Estatus_Rol:     (TINYINT) 1 = Activo/Asignable, 0 = Revocado/Histórico.
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Roles`;
+
+CREATE OR REPLACE
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Roles` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD Y CLAVES DE AUTORIZACIÓN
+           Renombramiento estratégico para evitar ambigüedad en JOINs con tabla de Usuarios.
+           ----------------------------------------------------------------------------------- */
+        `Roles`.`Id_Rol`              AS `Id_Rol`,
+        `Roles`.`Codigo`              AS `Codigo_Rol`,  -- Key sensitive para Middlewares
+        `Roles`.`Nombre`              AS `Nombre_Rol`,  -- Label para UI
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: DETALLES INFORMATIVOS
+           Información de soporte para los tooltips en el panel de administración de usuarios.
+           ----------------------------------------------------------------------------------- */
+        `Roles`.`Descripcion`         AS `Descripcion_Rol`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: METADATOS DE CONTROL (ESTATUS)
+           Mapeo semántico: 'Activo' -> 'Estatus_Rol'.
+           Permite al Admin ver roles deprecados para reactivarlos si es necesario.
+           ----------------------------------------------------------------------------------- */
+        `Roles`.`Activo`              AS `Estatus_Rol`
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: TRAZABILIDAD (AUDITORÍA)
+           Se mantienen disponibles pero comentados para mantener la vista ligera (Lightweight).
+           Descomentar si el módulo de Auditoría requiere ver fechas de creación desde la vista.
+           ----------------------------------------------------------------------------------- */
+        -- , `Roles`.`created_at`
+        -- , `Roles`.`updated_at`
+
+    FROM
+        `Picade`.`Cat_Roles` `Roles`;
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   VIEW: Vista_Usuarios_Admin
+   ======================================================================================================
+   
+   1. VISIÓN GENERAL Y OBJETIVO DE NEGOCIO (BUSINESS GOAL)
+   -------------------------------------------------------
+   Esta vista constituye la **Interfaz de Lectura Optimizada** para el Grid Principal del Módulo de 
+   Administración de Usuarios.
+   
+   Su función es consolidar la identidad digital (`Usuarios`) y la identidad humana (`Info_Personal`) 
+   en una estructura plana, ligera y lista para ser consumida por componentes de UI (Tablas/Grids).
+
+   2. ARQUITECTURA DE DATOS (ESTRATEGIA DE INTEGRIDAD)
+   ---------------------------------------------------
+   - TIPO DE JOIN: Se utiliza **INNER JOIN** estricto entre las tablas `Usuarios`, `Info_Personal` y `Cat_Roles`.
+   
+   - JUSTIFICACIÓN TÉCNICA: 
+     En la lógica de negocio del sistema PICADE, existe una relación de dependencia existencial fuerte:
+     a) Un "Usuario" (Cuenta) NO puede existir sin estar vinculado a una "Persona" (Datos RH).
+     b) Un "Usuario" NO puede existir sin tener asignado un "Rol de Seguridad".
+     
+     Por lo tanto, cualquier registro que no cumpla estas condiciones se considera "Corrupto" o "Incompleto"
+     y debe ser excluido automáticamente de la lista operativa mediante el INNER JOIN.
+
+   3. ESTRATEGIA DE PRESENTACIÓN HÍBRIDA (UX & REPORTING)
+   ------------------------------------------------------
+   Para satisfacer tanto los requisitos de Interfaz de Usuario (Ordenamiento) como los de Reportes (Visualización),
+   esta vista expone los datos de nombres en dos formatos simultáneos:
+
+     A) FORMATO COMPUESTO (`Nombre_Completo`):
+        - Implementación: `CONCAT_WS(' ', Nombre, Paterno, Materno)`
+        - Uso: Etiquetas de UI, Encabezados de Perfil y **Reportes PDF**.
+        - Ventaja: Elimina la necesidad de concatenar cadenas en el Frontend o en el motor de reportes.
+
+     B) FORMATO ATÓMICO (`Nombre`, `Apellidos`):
+        - Implementación: Columnas individuales crudas.
+        - Uso: Lógica de **Ordenamiento (Sort)** y **Filtrado (Filter)** en el Grid.
+        - Ventaja: Permite cumplir la norma administrativa de ordenar listas por "Apellido Paterno" (A-Z)
+          en lugar de por Nombre de Pila.
+
+   4. DICCIONARIO DE DATOS (CONTRATO DE SALIDA)
+   --------------------------------------------
+   [Bloque 1: Identificadores de Sistema]
+   - Id_Usuario:      (INT) Llave primaria (Oculta en el Grid, usada para acciones CRUD).
+   - Ficha_Usuario:   (VARCHAR) Identificador corporativo único (Clave de búsqueda para Instructores).
+   - Email_Usuario:   (VARCHAR) Credencial de acceso (Login).
+
+   [Bloque 2: Identidad Personal]
+   - Nombre_Completo: (VARCHAR) Nombre completo pre-calculado para visualización rápida.
+   - Nombre:          (VARCHAR) Dato atómico para lógica de negocio.
+   - Apellido_Paterno:(VARCHAR) Dato atómico crítico para ordenamiento de listas.
+   - Apellido_Materno:(VARCHAR) Dato atómico complementario.
+
+   [Bloque 3: Seguridad y Control]
+   - Rol_Usuario:     (VARCHAR) Nombre legible del perfil de seguridad (ej: 'Administrador').
+   - Estatus_Usuario: (TINYINT) Bandera de acceso: 
+                        1 = Activo (Puede loguearse y ser Instructor).
+                        0 = Bloqueado (Acceso denegado y oculto en selectores operativos).
+   ====================================================================================================== */
+
+-- DROP VIEW IF EXISTS `Picade`.`Vista_Usuarios`;
+
+CREATE OR REPLACE 
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Usuarios` AS
+    SELECT
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD DIGITAL (CREDENCIALES)
+           Datos fundamentales para la identificación única de la cuenta.
+           ----------------------------------------------------------------------------------- */
+        `Usuarios`.`Id_Usuario`          AS `Id_Usuario`,
+        /* NUEVO CAMPO: FOTO DE PERFIL 
+           Permite mostrar una miniatura (thumbnail) en la tabla de usuarios. */
+        `Usuarios`.`Foto_Perfil_Url`     AS `Foto_Perfil`,
+        `Usuarios`.`Ficha`               AS `Ficha_Usuario`,
+        `Usuarios`.`Email`               AS `Email_Usuario`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: IDENTIDAD HUMANA (DATOS PERSONALES - ESTRATEGIA HÍBRIDA)
+           Se exponen ambos formatos para dar flexibilidad total al Frontend y Reportes.
+           ----------------------------------------------------------------------------------- */
+        
+        /* [FORMATO VISUAL]: Para mostrar en la celda del Grid o en Reportes PDF */
+        CONCAT_WS(' ', `Info_User`.`Nombre`, `Info_User`.`Apellido_Paterno`, `Info_User`.`Apellido_Materno`) AS `Nombre_Completo`,
+        
+        /* [FORMATO LÓGICO]: Para que el Grid pueda ordenar por 'Apellido_Paterno' aunque muestre el completo */
+        `Info_User`.`Nombre`             AS `Nombre`,
+        `Info_User`.`Apellido_Paterno`   AS `Apellido_Paterno`,
+        `Info_User`.`Apellido_Materno`   AS `Apellido_Materno`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: SEGURIDAD Y CONTROL DE ACCESO
+           Información crítica para la administración de permisos y auditoría rápida.
+           ----------------------------------------------------------------------------------- */
+        `Roles`.`Nombre`                 AS `Rol_Usuario`,
+        
+        /* Mapeo Semántico: 'Activo' -> 'Estatus_Usuario'
+           El Grid usará este valor para pintar el Switch (Verde/Gris) o filtrar instructores elegibles. */
+        `Usuarios`.`Activo`              AS `Estatus_Usuario`
+
+    FROM
+        `Picade`.`Usuarios` `Usuarios`
+        
+        /* JOIN 1: Vinculación Obligatoria con Datos Personales
+           Garantiza que todo usuario listado tenga una ficha de RH válida. */
+        INNER JOIN `Picade`.`Info_Personal` `Info_User`
+            ON `Usuarios`.`Fk_Id_InfoPersonal` = `Info_User`.`Id_InfoPersonal`
+            
+        /* JOIN 2: Vinculación Obligatoria con Roles de Seguridad
+           Garantiza que se muestre el nivel de privilegios del usuario. */
+        INNER JOIN `Picade`.`Cat_Roles` `Roles`
+            ON `Usuarios`.`Fk_Rol` = `Roles`.`Id_Rol`;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   VIEW: Vista_Cat_Tipos_Instruccion
+   ======================================================================================================
+   
+   1. OBJETIVO TÉCNICO Y DE NEGOCIO (BUSINESS GOAL)
+   ------------------------------------------------
+   Esta vista actúa como la **Interfaz Canónica de Administración** para el catálogo de "Tipos de 
+   Instrucción" (Naturaleza Pedagógica: Teórico, Práctico, Mixto).
+
+   Su función es desacoplar la estructura física de la tabla `Cat_Tipos_Instruccion_Cap` de la capa 
+   de presentación, proporcionando un punto de acceso único y estandarizado para el Grid de Mantenimiento.
+
+   2. ARQUITECTURA DE DATOS (PROYECCIÓN TOTAL)
+   -------------------------------------------
+   A diferencia de las vistas para dropdowns (que son ligeras), esta vista está diseñada para la 
+   **Gestión y Auditoría**, por lo que expone la totalidad de las columnas disponibles:
+   
+   - Datos Descriptivos: Se incluye la `Descripción` para que el administrador entienda el alcance 
+     de cada tipo.
+   - Datos de Auditoría: Se incluyen `created_at` y `updated_at` para rastrear cuándo se crearon 
+     o modificaron los registros.
+
+   3. NOMENCLATURA Y SEMÁNTICA (NORMALIZACIÓN)
+   -------------------------------------------
+   Se aplica una transformación de nombres (Aliasing) para garantizar consistencia con el resto del sistema:
+   - `Id_CatTipoInstCap` -> `Id_Tipo_Instruccion` (Más legible).
+   - `Activo` -> `Estatus_Tipo_Instruccion` (Semántica de control).
+
+   4. DICCIONARIO DE DATOS (CONTRATO DE SALIDA)
+   --------------------------------------------
+   [Bloque 1: Identidad]
+   - Id_Tipo_Instruccion:        (INT) Llave Primaria.
+   - Nombre_Tipo_Instruccion:    (VARCHAR) Etiqueta principal (ej: 'Teórico-Práctico').
+
+   [Bloque 2: Detalle]
+   - Descripcion_Tipo_Instruccion: (VARCHAR) Explicación detallada del tipo.
+
+   [Bloque 3: Control]
+   - Estatus_Tipo_Instruccion:   (TINYINT) 1 = Activo, 0 = Inactivo.
+
+   [Bloque 4: Auditoría]
+   - Fecha_Registro:             (TIMESTAMP) Fecha de creación.
+   - Ultima_Modificacion:        (TIMESTAMP) Fecha de último cambio.
+   ====================================================================================================== */
+
+CREATE OR REPLACE 
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Vista_Cat_Tipos_Instruccion_Admin` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD
+           Datos clave para operaciones CRUD (Update/Delete).
+           ----------------------------------------------------------------------------------- */
+        `TIC`.`Id_CatTipoInstCap`    AS `Id_Tipo_Instruccion`,
+        `TIC`.`Nombre`               AS `Nombre_Tipo_Instruccion`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: DETALLE OPERATIVO
+           Información contextual para el administrador.
+           ----------------------------------------------------------------------------------- */
+        `TIC`.`Descripcion`          AS `Descripcion_Tipo_Instruccion`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: METADATOS DE CONTROL
+           Semáforo de disponibilidad (Visible/Oculto).
+           ----------------------------------------------------------------------------------- */
+        `TIC`.`Activo`               AS `Estatus_Tipo_Instruccion`
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: TRAZABILIDAD (AUDITORÍA)
+           Datos temporales requeridos para el control administrativo.
+           ----------------------------------------------------------------------------------- */
+        -- `TIC`.`created_at`           AS `Fecha_Registro`,
+        -- `TIC`.`updated_at`           AS `Ultima_Modificacion`
+
+    FROM 
+        `Picade`.`Cat_Tipos_Instruccion_Cap` `TIC`;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   VIEW: Vista_Temas_Capacitacion
+   ======================================================================================================
+   
+   1. OBJETIVO TÉCNICO Y DE NEGOCIO (BUSINESS GOAL)
+   ------------------------------------------------
+   Esta vista constituye el **Tablero de Control Académico** para el administrador del sistema.
+   Su función es proporcionar un inventario "aplanado" y legible de todos los Temas de Capacitación 
+   disponibles, enriquecido con la información de su clasificación pedagógica.
+
+   Actúa como la interfaz de lectura para el Grid Principal de Temas, permitiendo identificar rápidamente
+   qué se enseña, cuánto dura y bajo qué modalidad instruccional.
+
+   2. ARQUITECTURA DE DATOS (ESTRATEGIA DE VISIBILIDAD TOTAL)
+   ----------------------------------------------------------
+   - TIPO DE JOIN: Se utiliza **LEFT JOIN** entre `Temas` e `Instrucción`.
+   
+   - JUSTIFICACIÓN TÉCNICA: 
+     En la operación real, es posible que se carguen Temas masivamente (vía CSV) sin asignarles 
+     todavía un Tipo de Instrucción. 
+     Si usáramos INNER JOIN, esos temas "huérfanos" desaparecerían del grid, volviéndose invisibles 
+     e imposibles de corregir desde la UI. 
+     El LEFT JOIN garantiza que el administrador vea TODO el catálogo, incluso los registros incompletos.
+
+   3. NOMENCLATURA Y SEMÁNTICA (UX OPTIMIZATION)
+   ----------------------------------------------
+   - Limpieza de Ruido: Se omiten columnas técnicas irrelevantes para el listado masivo 
+     (como descripciones largas o IDs foráneos), priorizando la velocidad de lectura visual.
+   - Estandarización: Se renombran las columnas (`Nombre_Tema`, `Estatus_Tema`) para mantener 
+     coherencia con el resto de los módulos del sistema (Usuarios, Geografía).
+
+   4. DICCIONARIO DE DATOS (CONTRATO DE SALIDA)
+   --------------------------------------------
+   [Bloque 1: Identidad del Recurso]
+   - Id_Tema:                 (INT) Llave primaria (Oculta en UI, usada para los botones Editar/Eliminar).
+   - Codigo_Tema:             (VARCHAR) Clave interna (ej: 'SEG-001').
+   - Nombre_Tema:             (VARCHAR) Denominación del curso/tema.
+
+   [Bloque 2: Detalles Académicos]
+   - Duracion_Horas:          (INT) Carga horaria estándar.
+   - Nombre_Tipo_Instruccion: (VARCHAR) Clasificación pedagógica (ej: 'Teórico', 'Práctico').
+                              Puede ser NULL si no se ha asignado aún.
+
+   [Bloque 3: Control]
+   - Estatus_Tema:            (TINYINT) 1 = Activo (Programable), 0 = Baja Lógica (Histórico).
+   ====================================================================================================== */
+
+CREATE OR REPLACE 
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Vista_Temas_Capacitacion` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD DEL REGISTRO
+           Datos fundamentales para la identificación única y operaciones CRUD.
+           ----------------------------------------------------------------------------------- */
+        `Tem`.`Id_Cat_TemasCap`      AS `Id_Tema`,      -- Identificador único para el Backend
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: INFORMACIÓN VISUAL PRINCIPAL
+           Datos descriptivos que el usuario final lee en la tabla.
+           ----------------------------------------------------------------------------------- */
+        `Tem`.`Codigo`               AS `Codigo_Tema`,  -- Clave corta o mnemotécnico
+        `Tem`.`Nombre`               AS `Nombre_Tema`,  -- Título oficial del tema
+        `Tem`.`Duracion_Horas`       AS `Duracion_Horas`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: INFORMACIÓN RELACIONAL (HUMANIZADA)
+           Contexto pedagógico proveniente del catálogo satélite.
+           ----------------------------------------------------------------------------------- */
+        /* Nota: Se proyecta el nombre directo. Si es NULL, el Frontend (Laravel/Vue) debe 
+           manejar la visualización (ej: pintar un guion "-" o una etiqueta "Sin Asignar"). */
+		-- `Inst`.`Id_CatTipoCap` AS `Id_Tipo_Instruccion`,
+        `Inst`.`Nombre`              AS `Nombre_Tipo_Instruccion`, 
+        -- COALESCE(`Inst`.`Nombre`, '--- SIN TIPO ASIGNADO ---') AS `Nombre_Tipo_Capacitacion`,
+		-- `Inst`.`Descripcion` AS `Descripcion_TipoCap`, 
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: ESTADO OPERATIVO
+           Semáforo para indicar disponibilidad en la programación de cursos.
+           ----------------------------------------------------------------------------------- */
+        `Tem`.`Activo`               AS `Estatus_Tema`
+
+    FROM 
+        `Picade`.`Cat_Temas_Capacitacion` `Tem`
+        
+        /* LEFT JOIN ESTRATÉGICO: 
+           Garantiza la visibilidad de temas 'huérfanos' (sin tipo de instrucción asignado)
+           para permitir su corrección administrativa. */
+        LEFT JOIN `Picade`.`Cat_Tipos_Instruccion_Cap` `Inst` 
+            ON `Tem`.`Fk_Id_CatTipoInstCap` = `Inst`.`Id_CatTipoInstCap`;
+
+USE Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   1. VIEW: Vista_Estatus_Capacitacion
+   ======================================================================================================
+   
+   1. OBJETIVO TÉCNICO Y DE NEGOCIO (BUSINESS GOAL)
+   ------------------------------------------------
+   Esta vista constituye la **Interfaz Maestra de Control de Estados** para el sistema PICADE. 
+   Su función es proporcionar una lectura estandarizada de las etapas del ciclo de vida de una 
+   capacitación (ej: Programado, En Curso, Finalizado).
+
+   Es la fuente de verdad única para:
+   - El Grid de Administración del Catálogo de Estatus.
+   - Middlewares de autorización que verifican si una capacitación es "Final" para liberar temas.
+   - Reportes de indicadores de avance y gestión operativa.
+
+   2. ARQUITECTURA DE DISEÑO (FLATTENED LOOKUP)
+   --------------------------------------------
+   Al ser una tabla de referencia atómica (Catálogo Raíz), no requiere JOINs complejos hacia padres. 
+   Sin embargo, su valor Diamond Standard reside en la **Normalización Semántica** y la 
+   **Exposición de Lógica de Negocio**:
+   
+   - Abstracción de Identificadores: Se renombran columnas técnicas (Id_CatEstCap) a alias de negocio
+     (Id_Estatus_Capacitacion) para asegurar que el contrato de datos (API/Frontend) sea legible.
+   
+   - Visibilidad de Atributos Críticos: Se expone de forma clara la bandera `Es_Final`, la cual 
+     es el interruptor lógico que decide si una capacitación deja de ser un "compromiso activo" 
+     en los calendarios.
+
+   3. LÓGICA DE CONTROL Y VISIBILIDAD (SOFT DELETES)
+   -------------------------------------------------
+   - Principio de Auditoría Total: La vista proyecta todos los registros (Activos e Inactivos).
+   - Justificación: Los administradores deben poder identificar estatus que han sido "deprecados" 
+     pero que siguen existiendo en el historial de miles de capacitaciones pasadas. Ocultarlos 
+     rompería la integridad visual de los reportes históricos.
+   - El filtrado para selectores dinámicos se delega a los procedimientos específicos (SP_ListarActivos).
+
+   4. DICCIONARIO DE DATOS (CONTRATO DE SALIDA)
+   --------------------------------------------
+   [Bloque 1: Identidad y Claves]
+   - Id_Estatus_Capacitacion:  (INT) Identificador único y llave primaria.
+   - Codigo_Estatus:           (VARCHAR) Clave corta única para lógica interna (ej: 'PROG', 'FIN').
+   - Nombre_Estatus:           (VARCHAR) Denominación oficial y legible para el usuario.
+
+   [Bloque 2: Información Operativa]
+   - Descripcion_Estatus:      (VARCHAR) Explicación del significado de la etapa para el usuario.
+   - Es_Estado_Final:          (TINYINT) Booleano: 1 = Indica que el curso concluyó (libera candados), 
+                                0 = El curso sigue en proceso u operativo.
+
+   [Bloque 3: Control y Auditoría]
+   - Estatus_Activo:           (TINYINT) 1 = Disponible para nuevos registros, 0 = Baja Lógica.
+   - Ultima_Actualizacion:     (TIMESTAMP) Marca de tiempo del último cambio realizado.
+   ====================================================================================================== */
+
+CREATE OR REPLACE 
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Estatus_Capacitacion` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD Y CLAVES
+           Estandarización de nombres para un consumo agnóstico desde el API/Frontend.
+           ----------------------------------------------------------------------------------- */
+        `Est`.`Id_CatEstCap`         AS `Id_Estatus_Capacitacion`,
+        `Est`.`Codigo`               AS `Codigo_Estatus`,
+        `Est`.`Nombre`               AS `Nombre_Estatus`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: LÓGICA OPERATIVA Y DESCRIPCIÓN
+           Campos que dictan el comportamiento del sistema ante este registro.
+           ----------------------------------------------------------------------------------- */
+         `Est`.`Descripcion`          AS `Descripcion_Estatus`,
+        -- `Est`.`Es_Final`             AS `Bandera_de_Bloqueo`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: METADATOS DE CICLO DE VIDA
+           Control de borrado lógico (Activo/Inactivo).
+           ----------------------------------------------------------------------------------- */
+        `Est`.`Activo`               AS `Estatus_de_Capacitacion`
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: TRAZABILIDAD
+           Datos de auditoría para el administrador. Se expone la fecha de actualización
+           para facilitar el ordenamiento en el Grid (Mostrar cambios recientes primero).
+           ----------------------------------------------------------------------------------- */
+		-- `Est`.`created_at`           AS `Fecha_de_Creacion`
+        -- `Est`.`updated_at`           AS `Ultima_Actualizacion`
+
+    FROM 
+        `Picade`.`Cat_Estatus_Capacitacion` `Est`;
+
+/* --- VERIFICACIÓN DE LA VISTA --- */
+-- SELECT * FROM Picade.Vista_Cat_Estatus_Capacitacion;
+
+use Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   VIEW: Vista_Modalidad_Capacitacion
+   ======================================================================================================
+   
+   1. OBJETIVO TÉCNICO Y DE NEGOCIO (BUSINESS GOAL)
+   ------------------------------------------------
+   Esta vista constituye la **Interfaz Canónica de Administración** para el catálogo de "Modalidades de 
+   Capacitación" (El "CÓMO" se imparte el curso: Presencial, Remoto, Híbrido).
+
+   Su función principal es desacoplar la estructura física de la tabla `Cat_Modalidad_Capacitacion` 
+   de la capa de presentación, proporcionando un punto de acceso único y estandarizado para:
+   - El Grid de Mantenimiento (CRUD).
+   - Los selectores en la creación de cursos (`DatosCapacitaciones`).
+   - Los reportes estadísticos de distribución de carga (ej: % de cursos virtuales vs presenciales).
+
+   2. ARQUITECTURA DE DATOS (PATRÓN DE PROYECCIÓN)
+   -----------------------------------------------
+   Al ser una Entidad Raíz (Root Entity) sin dependencias foráneas complejas, esta vista se enfoca en la 
+   **Normalización Semántica** y la **Claridad de Contrato de Datos**:
+
+   - Abstracción de Identificadores (Aliasing): Se transforma `Id_CatModalCap` a `Id_Modalidad`.
+     Esto facilita la lectura del JSON en el Frontend (ej: `response.data.id_modalidad`).
+   
+   - Estandarización de Atributos: Se renombran columnas genéricas como `Codigo` y `Nombre` a 
+     `Codigo_Modalidad` y `Nombre_Modalidad` para evitar ambigüedades en consultas cruzadas futuras.
+
+   3. GESTIÓN DE INTEGRIDAD Y NULOS
+   --------------------------------
+   - Campo `Codigo`: La tabla permite valores NULL (para datos históricos o informales). La vista expone 
+     el dato crudo (`RAW`). Es responsabilidad del consumidor (Frontend) decidir si renderiza un valor 
+     por defecto o deja la celda vacía.
+   
+   - Campo `Descripcion`: Se expone para brindar contexto operativo (ej: definir qué implica "Híbrido").
+
+   4. VISIBILIDAD DE ESTATUS (AUDITORÍA TOTAL)
+   -------------------------------------------
+   - La vista proyecta **TODO el universo de datos** (Activos e Inactivos/Borrados Lógicamente).
+   - Razón: En los paneles de administración, es vital ver modalidades obsoletas (ej: "A Distancia por Radio") 
+     que ya no se usan pero que existen en el historial de cursos antiguos. Ocultarlas rompería la 
+     integridad visual de los reportes históricos.
+   - El filtrado para listas desplegables operativas ("Crear Nuevo Curso") se delega a los SPs específicos 
+     que filtren por `Activo = 1`.
+
+   5. DICCIONARIO DE DATOS (CONTRATO DE SALIDA)
+   --------------------------------------------
+   [Bloque 1: Identidad]
+   - Id_Modalidad:          (INT) Llave Primaria única.
+   - Codigo_Modalidad:      (VARCHAR) Clave corta interna (ej: 'PRES', 'VIRT'). Puede ser NULL.
+   - Nombre_Modalidad:      (VARCHAR) Denominación oficial (ej: 'PRESENCIAL').
+
+   [Bloque 2: Contexto Operativo]
+   - Descripcion_Modalidad: (VARCHAR) Explicación del alcance logístico de la modalidad.
+
+   [Bloque 3: Control de Ciclo de Vida]
+   - Estatus_Modalidad:     (TINYINT) Semáforo: 1 = Disponible/Activo, 0 = Descontinuado/Inactivo.
+
+   [Bloque 4: Trazabilidad]
+   - (Opcional) Fechas de creación y actualización para auditoría.
+   ====================================================================================================== */
+
+CREATE OR REPLACE 
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Modalidad_Capacitacion` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD Y CLAVES
+           Estandarización de nombres para consumo agnóstico (API/Frontend/Reportes).
+           ----------------------------------------------------------------------------------- */
+        `Mod`.`Id_CatModalCap`           AS `Id_Modalidad`,
+        `Mod`.`Codigo`                   AS `Codigo_Modalidad`,
+        `Mod`.`Nombre`                   AS `Nombre_Modalidad`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: DETALLES INFORMATIVOS
+           Información contextual para tooltips o documentación de usuario.
+           ----------------------------------------------------------------------------------- */
+        `Mod`.`Descripcion`              AS `Descripcion_Modalidad`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: METADATOS DE CONTROL (ESTATUS)
+           Mapeo semántico: 'Activo' -> 'Estatus_Modalidad'.
+           Permite diferenciar visualmente en el Grid (ej: Badge Verde vs Gris).
+           ----------------------------------------------------------------------------------- */
+        `Mod`.`Activo`                   AS `Estatus_Modalidad`
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: TRAZABILIDAD (AUDITORÍA)
+           Datos temporales para ordenamiento cronológico en paneles administrativos.
+           (Comentados por defecto para mantener la vista ligera, descomentar si se requiere).
+           ----------------------------------------------------------------------------------- */
+        -- , `Mod`.`created_at`          AS `Fecha_Registro`
+        -- , `Mod`.`updated_at`          AS `Ultima_Modificacion`
+
+    FROM 
+        `Picade`.`Cat_Modalidad_Capacitacion` `Mod`;
+
+/* --- VERIFICACIÓN DE LA VISTA (QA RÁPIDO) --- */
+-- SELECT * FROM Picade.Vista_Modalidad_Capacitacion;
+
+USE Picade;
+
+/* ------------------------------------------------------------------------------------------------------ */
+/* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
+/* ------------------------------------------------------------------------------------------------------ */
+
+/* ======================================================================================================
+   VIEW: Vista_Estatus_Participante
+   ======================================================================================================
+   
+   1. OBJETIVO TÉCNICO Y DE NEGOCIO (BUSINESS GOAL)
+   ------------------------------------------------
+   Esta vista constituye la **Interfaz Maestra de Calificación y Seguimiento** para el sistema PICADE. 
+   Su función es proporcionar una lectura estandarizada de los posibles estados finales de un asistente
+   a un evento de capacitación (ej: Aprobado, Reprobado, Pendiente, No Asistió).
+
+   Es la fuente de verdad única para:
+   - El Grid de Administración del Catálogo de Estatus del Participante.
+   - El Módulo de Registro de Resultados (Donde el instructor califica a los asistentes).
+   - Reportes de Cumplimiento Normativo (Cómputo de personal apto vs no apto).
+   - Tableros de KPIs sobre eficacia de la capacitación (% de aprobación por sede o tema).
+
+   2. ARQUITECTURA DE DISEÑO (LOOKUP ABSTRACTION)
+   ----------------------------------------------
+   Al ser una tabla de referencia atómica (Catálogo de Etiquetado), se aplica una **Normalización 
+   Semántica** para garantizar que el contrato de datos sea intuitivo para desarrolladores de API:
+   
+   - Abstracción de Identificadores: Se renombra `Id_CatEstPart` a `Id_Estatus_Participante`.
+   - Nomenclatura de Negocio: Se transforman columnas genéricas como `Codigo` y `Nombre` a 
+     `Codigo_Estatus` y `Nombre_Estatus` para evitar colisiones en consultas que involucren 
+     múltiples estatus (ej: Estatus del Curso vs Estatus del Alumno).
+
+   3. GESTIÓN DE INTEGRIDAD Y NULOS
+   --------------------------------
+   - Campo `Codigo_Estatus`: Al ser un campo con restricción UNIQUE en la tabla base, se expone como 
+     la "Llave de Negocio" (Natural Key). El sistema lo usa para lógicas cableadas (ej: 'APROB' para 
+     permitir la descarga de constancias).
+   - Campo `Descripcion_Estatus`: Se proyecta para brindar claridad al administrador sobre los criterios 
+     que definen a ese estatus (ej: "Aplica para calificaciones menores a 8.0").
+
+   4. VISIBILIDAD JERÁRQUICA (SOFT DELETES)
+   ----------------------------------------
+   - Principio de Trazabilidad Histórica: La vista proyecta **TODO el universo de datos** (Activos/Inactivos).
+   - Justificación: Si un estatus como "Pendiente de Pago" es desactivado, los registros de 
+     participantes antiguos vinculados a él NO deben quedar en blanco en los reportes de auditoría.
+     La vista garantiza la persistencia visual del historial.
+
+   5. DICCIONARIO DE DATOS (CONTRATO DE SALIDA)
+   --------------------------------------------
+   [Bloque 1: Identidad y Claves]
+   - Id_Estatus_Participante: (INT) Llave Primaria única. Identificador del sistema.
+   - Codigo_Estatus:          (VARCHAR) Clave técnica única (ej: 'ASIS', 'REPR'). 
+   - Nombre_Estatus:          (VARCHAR) Etiqueta legible (ej: 'ASISTENCIA CONFIRMADA').
+
+   [Bloque 2: Contexto Operativo]
+   - Descripcion_Estatus:     (VARCHAR) Explicación del alcance o criterios del estatus.
+
+   [Bloque 3: Control de Ciclo de Vida]
+   - Estatus_Activo:          (TINYINT) 1 = Disponible para nuevos registros, 0 = Obsoleto/Histórico.
+
+   [Bloque 4: Auditoría de Cambios]
+   - Fecha_Registro:          (TIMESTAMP) Momento de la creación inicial.
+   - Ultima_Modificacion:     (TIMESTAMP) Momento del último ajuste realizado por administración.
+   ====================================================================================================== */
+
+CREATE OR REPLACE 
+    ALGORITHM = UNDEFINED 
+    DEFINER = `root`@`localhost` 
+    SQL SECURITY DEFINER
+VIEW `Picade`.`Vista_Estatus_Participante` AS
+    SELECT 
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 1: IDENTIDAD Y CLAVES
+           Estandarización de nombres para un consumo agnóstico (API/Frontend/Reportes).
+           ----------------------------------------------------------------------------------- */
+        `Est`.`Id_CatEstPart`           AS `Id_Estatus_Participante`,
+        `Est`.`Codigo`                  AS `Codigo_Estatus`,
+        `Est`.`Nombre`                  AS `Nombre_Estatus`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 2: DETALLES INFORMATIVOS
+           Información contextual para tooltips o aclaraciones en reportes gerenciales.
+           ----------------------------------------------------------------------------------- */
+        `Est`.`Descripcion`             AS `Descripcion_Estatus`,
+
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 3: METADATOS DE CONTROL (ESTATUS)
+           Define si el registro es seleccionable en el flujo operativo actual.
+           ----------------------------------------------------------------------------------- */
+        `Est`.`Activo`                  AS `Estatus_Activo`
+        
+        /* -----------------------------------------------------------------------------------
+           BLOQUE 4: TRAZABILIDAD (AUDITORÍA)
+           Datos temporales para trazabilidad y ordenamiento por relevancia cronológica.
+           ----------------------------------------------------------------------------------- */
+        -- `Est`.`created_at`              AS `Fecha_Registro`,
+        -- `Est`.`updated_at`              AS `Ultima_Modificacion`
+
+    FROM 
+        `Picade`.`Cat_Estatus_Participante` `Est`;
+
+/* --- VERIFICACIÓN DE LA VISTA (QA RÁPIDO) --- */
+-- SELECT * FROM Picade.Vista_Estatus_Participante;
+
