@@ -196,7 +196,7 @@ ALTER TABLE `Cat_Subdirecciones` AUTO_INCREMENT = 1;
 -- Si la tabla está VACÍA, puedes cargar el Id para conservar exactamente esos IDs.
 LOAD DATA INFILE 'C:\\Users\\Jesus\\Desktop\\ArchivosDBPicade\\CSV\\CATALOGO-GERENCIAS-ACTIVOS-FINAL.csv'
 INTO TABLE `Cat_Gerencias_Activos`
-CHARACTER SET utf8mb4
+CHARACTER SET latin1
 FIELDS TERMINATED BY ';'
 OPTIONALLY ENCLOSED BY '"'
 LINES TERMINATED BY '\r\n'

@@ -708,7 +708,6 @@ CALL SP_ConsularMisCursos(@U_P31);
 SET @U_P32 = (SELECT Id_Usuario FROM Usuarios WHERE Ficha = 'QA-DIAMOND-P32');
 CALL SP_ConsularMisCursos(@U_P32);
 
-
 /* ----------------------------------------------------------------------------------------------------------
    [AUDITORÍA DE VISTAS]: Validación de Listas de Asistencia.
    [ACCIÓN]: El instructor consulta la lista de participantes del curso C04.

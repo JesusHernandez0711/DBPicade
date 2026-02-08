@@ -73,3 +73,4 @@ SET @Id_Version_Actual = (SELECT MAX(Id_DatosCap) FROM DatosCapacitaciones WHERE
 SELECT COUNT(*) AS Alumnos_Reales_En_Esta_Version 
 FROM Capacitaciones_Participantes 
 WHERE Fk_Id_DatosCap = @Id_Version_Actual;
+
