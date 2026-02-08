@@ -48,12 +48,12 @@ ProcBI: BEGIN
     SELECT 
         `Gerencia_Solicitante` AS `Gerencia`,
         COUNT(*) AS `Total_Inscritos`,
-        SUM(CASE WHEN `Estatus_Participante` = 'APROBADO' THEN 1 ELSE 0 END) AS `Total_Aprobados`,
-        SUM(CASE WHEN `Estatus_Participante` = 'REPROBADO' THEN 1 ELSE 0 END) AS `Total_Reprobados`,
+        SUM(CASE WHEN `Resultado_Final` = 'APROBADO' THEN 1 ELSE 0 END) AS `Total_Aprobados`,
+        SUM(CASE WHEN `Resultado_Final` = 'REPROBADO' THEN 1 ELSE 0 END) AS `Total_Reprobados`,
         
         /* KPI: TASA DE EFICIENCIA TERMINAL */
         ROUND(
-            (SUM(CASE WHEN `Estatus_Participante` = 'APROBADO' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 
+            (SUM(CASE WHEN `Resultado_Final` = 'APROBADO' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 
             2
         ) AS `Porcentaje_Eficiencia`
         
@@ -72,11 +72,11 @@ ProcBI: BEGIN
         COUNT(DISTINCT `Folio_Curso`) AS `Cursos_Impartidos`,
         COUNT(*) AS `Total_Alumnos_Atendidos`,
         
-        SUM(CASE WHEN `Estatus_Participante` = 'REPROBADO' THEN 1 ELSE 0 END) AS `Total_Reprobados`,
+        SUM(CASE WHEN `Resultado_Final` = 'REPROBADO' THEN 1 ELSE 0 END) AS `Total_Reprobados`,
         
         /* KPI: TASA DE FRICCIÓN (Failure Rate) */
         ROUND(
-            (SUM(CASE WHEN `Estatus_Participante` = 'REPROBADO' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 
+            (SUM(CASE WHEN `Resultado_Final` = 'REPROBADO' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 
             2
         ) AS `Tasa_Reprobacion`
         
@@ -91,6 +91,15 @@ ProcBI: BEGIN
 END$$
 
 DELIMITER ;
+
+-- Ejecutar para ver todo el historial (desde el año 2000 hasta hoy)
+CALL SP_GenerarReporteGerencial_Docente('2000-01-01', '2026-12-31');
+
+-- Ejecutar para el año fiscal actual
+CALL SP_GenerarReporteGerencial_Docente(NULL, NULL);
+
+DROP PROCEDURE `SP_GenerarReporteGerencial_Docente`;
+
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════════════════════
    PROCEDIMIENTO: SP_GenerarReporte_DC3

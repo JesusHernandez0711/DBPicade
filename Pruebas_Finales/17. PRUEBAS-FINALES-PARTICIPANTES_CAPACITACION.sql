@@ -874,6 +874,7 @@ CALL SP_ConsultarCapacitacionEspecifica(@C01_Ver);
 CALL SP_ConsultarCapacitacionEspecifica(@C02_Ver);
 CALL SP_ConsultarCapacitacionEspecifica(@C03_Ver);
 CALL SP_ConsultarCapacitacionEspecifica(@C04_Ver);
+
 CALL SP_ConsultarCapacitacionEspecifica(@C05_Ver);
 
 CALL SP_ConsultarCapacitacionEspecifica(@C06_Ver);
@@ -1273,7 +1274,7 @@ CALL SP_Dashboard_ResumenAnual();
    [AUDITORÍA DE VISTAS]: Gerencia verifica impacto en KPIs.
    [SP USADO]: SP_Dashboard_ResumenGerencial
    ---------------------------------------------------------------------------------------------------------- */
-SELECT '--- 🔍 CHECKPOINT 8: Dashboard Gerencial (Personas Capacitadas) ---' AS CHECK_POINT;
+-- SELECT '--- 🔍 CHECKPOINT 8: Dashboard Gerencial (Personas Capacitadas) ---' AS CHECK_POINT;
 CALL SP_Dashboard_ResumenGerencial(@FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 60 DAY));
 
 /* ----------------------------------------------------------------------------------------------------------
@@ -1281,7 +1282,7 @@ CALL SP_Dashboard_ResumenGerencial(@FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 60 DA
    [ACCIÓN]: Ejecutar `SP_BuscadorGlobalPICADE` buscando el patrón del proyecto.
    [ESPERADO]: Deben aparecer los cursos con estatus "POR INICIAR", confirmando que están listos para el público.
    ---------------------------------------------------------------------------------------------------------- */
-SELECT '--- 🔍 AUDITORÍA VISUAL 4: Buscador Global (Status: Por Iniciar) ---' AS CHECK_POINT;
+-- SELECT '--- 🔍 AUDITORÍA VISUAL 4: Buscador Global (Status: Por Iniciar) ---' AS CHECK_POINT;
 
 CALL SP_BuscadorGlobalPICADE('QA-DIAMOND');
 CALL SP_ObtenerMatrizPICADE(NULL, @FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 60 DAY));
@@ -1364,7 +1365,7 @@ CALL SP_Dashboard_ResumenAnual();
    [AUDITORÍA DE VISTAS]: Gerencia verifica impacto en KPIs.
    [SP USADO]: SP_Dashboard_ResumenGerencial
    ---------------------------------------------------------------------------------------------------------- */
-SELECT '--- 🔍 CHECKPOINT 8: Dashboard Gerencial (Personas Capacitadas) ---' AS CHECK_POINT;
+-- SELECT '--- 🔍 CHECKPOINT 8: Dashboard Gerencial (Personas Capacitadas) ---' AS CHECK_POINT;
 CALL SP_Dashboard_ResumenGerencial(@FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 60 DAY));
 
 /* ----------------------------------------------------------------------------------------------------------
@@ -1372,7 +1373,7 @@ CALL SP_Dashboard_ResumenGerencial(@FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 60 DA
    [ACCIÓN]: Ejecutar `SP_BuscadorGlobalPICADE` buscando el patrón del proyecto.
    [ESPERADO]: Deben aparecer los cursos con estatus "POR INICIAR", confirmando que están listos para el público.
    ---------------------------------------------------------------------------------------------------------- */
-SELECT '--- 🔍 AUDITORÍA VISUAL 4: Buscador Global (Status: Por Iniciar) ---' AS CHECK_POINT;
+-- SELECT '--- 🔍 AUDITORÍA VISUAL 4: Buscador Global (Status: Por Iniciar) ---' AS CHECK_POINT;
 
 CALL SP_BuscadorGlobalPICADE('QA-DIAMOND');
 CALL SP_ObtenerMatrizPICADE(NULL, @FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 60 DAY));
@@ -1442,18 +1443,18 @@ CALL SP_Dashboard_ResumenAnual();
    [AUDITORÍA DE VISTAS]: Gerencia verifica impacto en KPIs.
    [SP USADO]: SP_Dashboard_ResumenGerencial
    ---------------------------------------------------------------------------------------------------------- */
-SELECT '--- 🔍 CHECKPOINT 8: Dashboard Gerencial (Personas Capacitadas) ---' AS CHECK_POINT;
-CALL SP_Dashboard_ResumenGerencial(@FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 60 DAY));
+-- SELECT '--- 🔍 CHECKPOINT 8: Dashboard Gerencial (Personas Capacitadas) ---' AS CHECK_POINT;
+CALL SP_Dashboard_ResumenGerencial(@FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 360 DAY));
 
 /* ----------------------------------------------------------------------------------------------------------
    [AUDITORÍA DE VISTAS]: Validación de Visibilidad Pública.
    [ACCIÓN]: Ejecutar `SP_BuscadorGlobalPICADE` buscando el patrón del proyecto.
    [ESPERADO]: Deben aparecer los cursos con estatus "POR INICIAR", confirmando que están listos para el público.
    ---------------------------------------------------------------------------------------------------------- */
-SELECT '--- 🔍 AUDITORÍA VISUAL 4: Buscador Global (Status: Por Iniciar) ---' AS CHECK_POINT;
+-- SELECT '--- 🔍 AUDITORÍA VISUAL 4: Buscador Global (Status: Por Iniciar) ---' AS CHECK_POINT;
 
 CALL SP_BuscadorGlobalPICADE('QA-DIAMOND');
-CALL SP_ObtenerMatrizPICADE(NULL, @FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 60 DAY));
+CALL SP_ObtenerMatrizPICADE(NULL, @FechaHoy, DATE_ADD(@FechaHoy, INTERVAL 360 DAY));
 
 /* ----------------------------------------------------------------------------------------------------------
    [AUDITORÍA DE VISTAS]: Validación de Carga Docente.

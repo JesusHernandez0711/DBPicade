@@ -1137,7 +1137,14 @@ THIS_PROC: BEGIN
         `VC`.`Clave_Gerencia_Solicitante`  AS `Gerencia`,   -- Cliente interno (ej: GSPSST)
         `VC`.`Nombre_Tema`                 AS `Tema`,       -- Título del curso
         `VC`.`Duracion_Horas`			   AS `Duracion`,
-        `VC`.`Nombre_Instructor`           AS `Instructor`, -- Responsable de la ejecución
+        `VC`.`Ficha_Instructor`,
+        /*`VC`.`Nombre_Instructor`           AS `Instructor`, -- Responsable de la ejecución
+        `Us`.`Ficha_Usuario`                AS `Ficha_Instructor`,
+        `Us`.`Apellido_Paterno_Instructor`             AS `Apellido_Paterno_Instructor`,
+        `Us`.`Apellido_Materno_Instructor`             AS `Apellido_Materno_Instructor`,
+        `Us`.`Nombre_Instructor`                       AS `Nombre_Instructor`,*/
+        CONCAT(`VC`.`Apellido_Paterno_Instructor`, ' ', `VC`.`Apellido_Materno_Instructor`, ' ', `VC`.`Nombre_Instructor`) AS `Instructor`,
+
         `VC`.`Nombre_Sede`                 AS `Sede`,       -- Lugar de ejecución
 		`VC`.`Nombre_Modalidad`            AS `Modalidad`,
         
@@ -1351,7 +1358,17 @@ THIS_PROC: BEGIN
         `VC`.`Clave_Gerencia_Solicitante`  AS `Gerencia`,   -- Cliente interno (ej: GSPSST)
         `VC`.`Nombre_Tema`                 AS `Tema`,       -- Título del curso
         `VC`.`Duracion_Horas`			   AS `Duracion`,
-        `VC`.`Nombre_Instructor`           AS `Instructor`, -- Responsable de la ejecución
+        
+        `VC`.`Ficha_Instructor`,
+        /*`VC`.`Nombre_Instructor`           AS `Instructor`, -- Responsable de la ejecución
+        `Us`.`Ficha_Usuario`                AS `Ficha_Instructor`,
+        `Us`.`Apellido_Paterno_Instructor`             AS `Apellido_Paterno_Instructor`,
+        `Us`.`Apellido_Materno_Instructor`             AS `Apellido_Materno_Instructor`,
+        `Us`.`Nombre_Instructor`                       AS `Nombre_Instructor`,
+        `VC`.`Nombre_Instructor`           AS `Instructor`, -- Responsable de la ejecución*/
+        CONCAT(`VC`.`Apellido_Paterno_Instructor`, ' ', `VC`.`Apellido_Materno_Instructor`, ' ', `VC`.`Nombre_Instructor`) AS `Instructor`,
+
+        
         `VC`.`Nombre_Sede`                 AS `Sede`,       -- Lugar de ejecución
 		`VC`.`Nombre_Modalidad`            AS `Modalidad`,
         
@@ -1736,6 +1753,7 @@ THIS_PROC: BEGIN
         /* [Recurso Humano] */
         `DC`.`Fk_Id_Instructor`            AS `Id_Instructor_Selected`, -- ID para el Select
         -- `VC`.`Nombre_Completo_Instructor`  AS `Instructor`,             -- Texto para leer
+        `VC`.`Ficha_Instructor`,
         CONCAT(IFNULL(`VC`.`Nombre_Instructor`,''), ' ', IFNULL(`VC`.`Apellido_Paterno_Instructor`,''), ' ', IFNULL(`VC`.`Apellido_Materno_Instructor`,'')) AS `Instructor`,
         
         /* [Infraestructura] */
