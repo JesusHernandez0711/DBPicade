@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
@@ -59,13 +59,13 @@ use Picade;
    - updated_at:          (DATETIME) Marca de tiempo de la última modificación.
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Regimenes`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Regimenes`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Regimenes` AS
+VIEW `PICADE`.`Vista_Regimenes` AS
     SELECT 
         /* -----------------------------------------------------------------------------------
            BLOQUE 1: IDENTIDAD Y CLAVES
@@ -95,7 +95,7 @@ VIEW `Picade`.`Vista_Regimenes` AS
         -- `Reg`.`updated_at`
 
     FROM
-        `Picade`.`Cat_Regimenes_Trabajo` `Reg`;
+        `PICADE`.`Cat_Regimenes_Trabajo` `Reg`;
 
 /* ============================================================================================
    PROCEDIMIENTO: SP_RegistrarRegimen

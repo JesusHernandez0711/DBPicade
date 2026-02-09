@@ -1,4 +1,4 @@
-USE Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
@@ -43,7 +43,7 @@ CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Gestion_de_Participantes` AS
+VIEW `PICADE`.`Vista_Gestion_de_Participantes` AS
     SELECT 
         /* =================================================================================
            SECCIÓN A: IDENTIDAD TRANSACCIONAL (PRIMARY KEYS & HANDLES)
@@ -187,7 +187,7 @@ VIEW `Picade`.`Vista_Gestion_de_Participantes` AS
            CAPA 1: LA TABLA DE HECHOS (FACT TABLE)
            Es el núcleo de la vista. Contiene la relación física entre IDs.
            --------------------------------------------------------------------------------- */
-        `Picade`.`capacitaciones_participantes` `Rel`
+        `PICADE`.`capacitaciones_participantes` `Rel`
         
         /* ---------------------------------------------------------------------------------
            CAPA 2: ENLACE AL CONTEXTO DEL CURSO (INNER JOIN)
@@ -199,29 +199,29 @@ VIEW `Picade`.`Vista_Gestion_de_Participantes` AS
            Al unir por el ID del DETALLE, garantizamos que el alumno está ligado a la 
            ejecución específica (Fecha/Hora/Instructor) y no al concepto abstracto del curso.
            --------------------------------------------------------------------------------- */
-        INNER JOIN `Picade`.`Vista_Capacitaciones` `VC`
+        INNER JOIN `PICADE`.`Vista_Capacitaciones` `VC`
             ON `Rel`.`Fk_Id_DatosCap` = `VC`.`Id_Detalle_de_Capacitacion`
             
         /* ---------------------------------------------------------------------------------
            CAPA 3: ENLACE A LA IDENTIDAD (INNER JOIN)
            Resolución del ID de Usuario (`Fk_Id_Usuario`) a datos legibles (Nombre, Ficha).
            --------------------------------------------------------------------------------- */
-        INNER JOIN `Picade`.`vista_usuarios` `UsPart`
+        INNER JOIN `PICADE`.`vista_usuarios` `UsPart`
             ON `Rel`.`Fk_Id_Usuario` = `UsPart`.`Id_Usuario`
             
         /* ---------------------------------------------------------------------------------
            CAPA 4: ENLACE A LA SEMÁNTICA DE ESTATUS (INNER JOIN)
            Resolución del código de estatus (`Fk_Id_CatEstPart`) a texto de negocio.
            --------------------------------------------------------------------------------- */
-        INNER JOIN `Picade`.`vista_estatus_participante` `EstPart`
+        INNER JOIN `PICADE`.`vista_estatus_participante` `EstPart`
             ON `Rel`.`Fk_Id_CatEstPart` = `EstPart`.`Id_Estatus_Participante`
 
 		/* 4. Datos del Creador (UsCrea) - ¡ESTO FALTABA! */
-        LEFT JOIN `Picade`.`vista_usuarios` `UsCrea`
+        LEFT JOIN `PICADE`.`vista_usuarios` `UsCrea`
             ON `Rel`.`Fk_Id_Usuario_Created_By` = `UsCrea`.`Id_Usuario`
 
         /* 5. Datos del Modificador (UsMod) - ¡ESTO FALTABA! */
-        LEFT JOIN `Picade`.`vista_usuarios` `UsMod`
+        LEFT JOIN `PICADE`.`vista_usuarios` `UsMod`
             ON `Rel`.`Fk_Id_Usuario_Updated_By` = `UsMod`.`Id_Usuario`;
 
 /* --- VERIFICACIÓN RÁPIDA --- */
@@ -1039,7 +1039,7 @@ ProcMisCursos: BEGIN
         `VGP`.`Fecha_Inscripcion`,             -- Cuándo se unió el alumno.
         `VGP`.`Fecha_Ultima_Modificacion`      -- Última vez que se tocó el registro.
 
-    FROM `Picade`.`Vista_Gestion_de_Participantes` `VGP`
+    FROM `PICADE`.`Vista_Gestion_de_Participantes` `VGP`
     
     -- Filtro mandatorio por usuario solicitante
     WHERE `VGP`.`Ficha_Participante` = (SELECT `Ficha_Usuario` FROM `vista_usuarios` WHERE `Id_Usuario` = _Id_Usuario)
@@ -1051,7 +1051,7 @@ ProcMisCursos: BEGIN
        ------------------------------------------------------------------------------------------------------ */
     AND `VGP`.`Id_Detalle_de_Capacitacion` = (
         SELECT MAX(`VSub`.`Id_Detalle_de_Capacitacion`)
-        FROM `Picade`.`Vista_Gestion_de_Participantes` `VSub`
+        FROM `PICADE`.`Vista_Gestion_de_Participantes` `VSub`
         WHERE `VSub`.`Folio_Curso` = `VGP`.`Folio_Curso`
           AND `VSub`.`Ficha_Participante` = `VGP`.`Ficha_Participante`
     )
@@ -1159,10 +1159,10 @@ ProcCursosImpart: BEGIN
         -- [BLOQUE 6: AUDITORÍA]
         `DC`.`created_at` AS `Fecha_Asignacion`
         
-    FROM `Picade`.`Vista_Capacitaciones` `VC`
+    FROM `PICADE`.`Vista_Capacitaciones` `VC`
     
     -- Unión con la tabla física para filtrar por el instructor titular de la versión.
-    INNER JOIN `Picade`.`DatosCapacitaciones` `DC` 
+    INNER JOIN `PICADE`.`DatosCapacitaciones` `DC` 
         ON `VC`.`Id_Detalle_de_Capacitacion` = `DC`.`Id_DatosCap`
         
     WHERE `DC`.`Fk_Id_Instructor` = _Id_Instructor
@@ -1174,7 +1174,7 @@ ProcCursosImpart: BEGIN
        ------------------------------------------------------------------------------------------------------ */
     AND `DC`.`Id_DatosCap` = (
         SELECT MAX(`DC2`.`Id_DatosCap`)
-        FROM `Picade`.`DatosCapacitaciones` `DC2`
+        FROM `PICADE`.`DatosCapacitaciones` `DC2`
         WHERE `DC2`.`Fk_Id_Capacitacion` = `VC`.`Id_Capacitacion`
           AND `DC2`.`Fk_Id_Instructor` = _Id_Instructor
     )
@@ -1953,7 +1953,7 @@ ProcPartCapac: BEGIN
            Puede ser negativo si hubo sobrecupo autorizado. */
         `VC`.`Cupo_Disponible`
         
-    FROM `Picade`.`Vista_Capacitaciones` `VC`
+    FROM `PICADE`.`Vista_Capacitaciones` `VC`
     
     -- Filtro por Llave Primaria del Detalle para obtener métricas exclusivas de este grupo.
     WHERE `VC`.`Id_Detalle_de_Capacitacion` = _Id_Detalle_Capacitacion;
@@ -2028,7 +2028,7 @@ ProcPartCapac: BEGIN
         -- o por qué fue reactivado después de una baja.
         `VGP`.`Nota_Auditoria`             AS `Justificacion`
 
-    FROM `Picade`.`Vista_Gestion_de_Participantes` `VGP`
+    FROM `PICADE`.`Vista_Gestion_de_Participantes` `VGP`
     
     -- Filtro estricto por la instancia del curso.
     WHERE `VGP`.`Id_Detalle_de_Capacitacion` = _Id_Detalle_Capacitacion
@@ -2128,10 +2128,10 @@ ProcBI: BEGIN
             2
         ) AS `Porcentaje_Eficiencia`
         
-    FROM `Picade`.`Vista_Gestion_de_Participantes` `VGP`
+    FROM `PICADE`.`Vista_Gestion_de_Participantes` `VGP`
     -- Unión con tabla física para validación estricta por IDs de estatus
-    INNER JOIN `Picade`.`capacitaciones_participantes` `CP` ON `VGP`.`Id_Registro_Participante` = `CP`.`Id_CapPart`
-    INNER JOIN `Picade`.`datoscapacitaciones` `DC` ON `VGP`.`Id_Detalle_de_Capacitacion` = `DC`.`Id_DatosCap`
+    INNER JOIN `PICADE`.`capacitaciones_participantes` `CP` ON `VGP`.`Id_Registro_Participante` = `CP`.`Id_CapPart`
+    INNER JOIN `PICADE`.`datoscapacitaciones` `DC` ON `VGP`.`Id_Detalle_de_Capacitacion` = `DC`.`Id_DatosCap`
     
     WHERE `VGP`.`Fecha_Inicio` BETWEEN v_Fecha_Ini AND v_Fecha_Fin
       -- Excluir cursos cancelados para no sesgar la eficiencia (Basado en ID 8)
@@ -2158,9 +2158,9 @@ ProcBI: BEGIN
             2
         ) AS `Tasa_Reprobacion`
         
-    FROM `Picade`.`Vista_Gestion_de_Participantes` `VGP`
-    INNER JOIN `Picade`.`capacitaciones_participantes` `CP` ON `VGP`.`Id_Registro_Participante` = `CP`.`Id_CapPart`
-    INNER JOIN `Picade`.`datoscapacitaciones` `DC` ON `VGP`.`Id_Detalle_de_Capacitacion` = `DC`.`Id_DatosCap`
+    FROM `PICADE`.`Vista_Gestion_de_Participantes` `VGP`
+    INNER JOIN `PICADE`.`capacitaciones_participantes` `CP` ON `VGP`.`Id_Registro_Participante` = `CP`.`Id_CapPart`
+    INNER JOIN `PICADE`.`datoscapacitaciones` `DC` ON `VGP`.`Id_Detalle_de_Capacitacion` = `DC`.`Id_DatosCap`
     
     WHERE `VGP`.`Fecha_Inicio` BETWEEN v_Fecha_Ini AND v_Fecha_Fin
       -- Filtro de integridad: Excluir cursos cancelados o eliminados
@@ -2254,8 +2254,8 @@ ProcMasivo: BEGIN
     INTO 
         v_Id_Estatus_Curso,
         v_Nombre_Estatus_Curso
-    FROM `Picade`.`datoscapacitaciones` DC
-    INNER JOIN `Picade`.`cat_estatus_capacitacion` CAT 
+    FROM `PICADE`.`datoscapacitaciones` DC
+    INNER JOIN `PICADE`.`cat_estatus_capacitacion` CAT 
         ON DC.`Fk_Id_CatEstCap` = CAT.`Id_CatEstCap`
     WHERE DC.`Id_DatosCap` = _Id_Detalle_Capacitacion
     LIMIT 1;
@@ -2313,21 +2313,21 @@ ProcMasivo: BEGIN
         `VGP`.`Duracion_Horas`     AS `Carga_Horaria`,
         `VGP`.`Instructor_Asignado` AS `Nombre_Instructor`
 
-    FROM `Picade`.`Vista_Gestion_de_Participantes` `VGP`
+    FROM `PICADE`.`Vista_Gestion_de_Participantes` `VGP`
     -- Unión con tabla de hechos para acceso a IDs de estatus y valores numéricos crudos.
-    INNER JOIN `Picade`.`capacitaciones_participantes` `CP` 
+    INNER JOIN `PICADE`.`capacitaciones_participantes` `CP` 
         ON `VGP`.`Id_Registro_Participante` = `CP`.`Id_CapPart`
     -- Cruce con tabla maestra de usuarios para vinculación de perfiles.
-    INNER JOIN `Picade`.`usuarios` `U` 
+    INNER JOIN `PICADE`.`usuarios` `U` 
         ON `CP`.`Fk_Id_Usuario` = `U`.`Id_Usuario`
     -- Acceso a información personal para extracción de datos biográficos (CURP/RFC/Puesto).
-    INNER JOIN `Picade`.`info_personal` `IP` 
+    INNER JOIN `PICADE`.`info_personal` `IP` 
         ON `U`.`Fk_Id_InfoPersonal` = `IP`.`Id_InfoPersonal`
     -- Resolución de puesto mediante catálogo (LEFT JOIN para no excluir si el perfil es incompleto).
-    LEFT JOIN `Picade`.`cat_puestos_trabajo` `Puesto` 
+    LEFT JOIN `PICADE`.`cat_puestos_trabajo` `Puesto` 
         ON `IP`.`Fk_Id_CatPuesto` = `Puesto`.`Id_CatPuesto`
     -- Resolución de estatus mediante catálogo para obtener nombres oficiales de acreditación.
-    INNER JOIN `Picade`.`cat_estatus_participante` `CatEst` 
+    INNER JOIN `PICADE`.`cat_estatus_participante` `CatEst` 
         ON `CP`.`Fk_Id_CatEstPart` = `CatEst`.`Id_CatEstPart`
 
     WHERE `VGP`.`Id_Detalle_de_Capacitacion` = _Id_Detalle_Capacitacion
@@ -2377,7 +2377,7 @@ ProcMasivo: BEGIN
             THEN 1 ELSE 0 
         END) AS `Registros_Baja_Omitidos`
 
-    FROM `Picade`.`capacitaciones_participantes` `CP`
+    FROM `PICADE`.`capacitaciones_participantes` `CP`
     WHERE `CP`.`Fk_Id_DatosCap` = _Id_Detalle_Capacitacion;
 
 END$$

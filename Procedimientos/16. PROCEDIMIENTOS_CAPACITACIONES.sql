@@ -1,4 +1,4 @@
-USE Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
@@ -68,7 +68,7 @@ CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Capacitaciones` AS
+VIEW `PICADE`.`Vista_Capacitaciones` AS
     SELECT 
         /* -----------------------------------------------------------------------------------
            BLOQUE 1: IDENTIDAD NUCLEAR (HEADER DATA)
@@ -99,12 +99,12 @@ VIEW `Picade`.`Vista_Capacitaciones` AS
         `DatCap`.`AsistentesReales`         AS `Asistentes_Manuales`, -- Renombramos para claridad
         
         /* A) CONTADOR DE SISTEMA (Dinámico) */
-        (SELECT COUNT(*) FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+        (SELECT COUNT(*) FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
          WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` AND `CP`.`Fk_Id_CatEstPart` != 5
         )                                   AS `Participantes_Activos`,
 
         /* B) CONTADOR DE BAJAS */
-        (SELECT COUNT(*) FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+        (SELECT COUNT(*) FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
          WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` AND `CP`.`Fk_Id_CatEstPart` = 5
         )                                   AS `Participantes_Baja`,
 
@@ -113,7 +113,7 @@ VIEW `Picade`.`Vista_Capacitaciones` AS
            Esto resuelve tu problema de los "27 asistentes". */
         GREATEST(
             COALESCE(`DatCap`.`AsistentesReales`, 0), 
-            (SELECT COUNT(*) FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+            (SELECT COUNT(*) FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
              WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` AND `CP`.`Fk_Id_CatEstPart` != 5)
         )                                   AS `Total_Impacto_Real`,
 
@@ -122,7 +122,7 @@ VIEW `Picade`.`Vista_Capacitaciones` AS
             `Cap`.`Asistentes_Programados` - 
             GREATEST(
                 COALESCE(`DatCap`.`AsistentesReales`, 0), 
-                (SELECT COUNT(*) FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+                (SELECT COUNT(*) FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
                  WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` AND `CP`.`Fk_Id_CatEstPart` != 5)
             )
         )                                   AS `Cupo_Disponible`,
@@ -134,7 +134,7 @@ VIEW `Picade`.`Vista_Capacitaciones` AS
         Nota: Usamos 'DatCap.Id_DatosCap' para correlacionar, no 'VC'   
 		 A) ACTIVOS 
         (
-			SELECT COUNT(*) FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+			SELECT COUNT(*) FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
 			WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` 
             AND `CP`.`Fk_Id_CatEstPart` != 5 -- Excluir BAJA (Hardcoded ID 5)
         )                                   AS `Participantes_Activos`,
@@ -142,7 +142,7 @@ VIEW `Picade`.`Vista_Capacitaciones` AS
          B) BAJAS 
         (
 			SELECT COUNT(*) 
-            FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+            FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
 			WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` 
 				AND `CP`.`Fk_Id_CatEstPart` = 5 -- Excluir BAJA (Hardcoded ID 5)
         )                                   AS `Participantes_Baja`,
@@ -152,7 +152,7 @@ VIEW `Picade`.`Vista_Capacitaciones` AS
             `Cap`.`Asistentes_Programados` - 
             (
             SELECT COUNT(*) 
-            FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+            FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
 			WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` 
             AND `CP`.`Fk_Id_CatEstPart` != 5 -- Excluir BAJA (Hardcoded ID 5)
             )
@@ -206,34 +206,34 @@ VIEW `Picade`.`Vista_Capacitaciones` AS
            ----------------------------------------------------------------------------------- */
         
         /* 1. EL PADRE (Cabecera) */
-        `Picade`.`capacitaciones` `Cap`
+        `PICADE`.`capacitaciones` `Cap`
         
         /* 2. EL HIJO (Detalle Operativo) - Relación 1:1 en el contexto de un reporte plano */
-        JOIN `Picade`.`datoscapacitaciones` `DatCap` 
+        JOIN `PICADE`.`datoscapacitaciones` `DatCap` 
             ON `Cap`.`Id_Capacitacion` = `DatCap`.`Fk_Id_Capacitacion`
         
         /* 3. INSTRUCTOR (Consumiendo Vista de Usuarios) */
-        JOIN `Picade`.`vista_usuarios` `Us` 
+        JOIN `PICADE`.`vista_usuarios` `Us` 
             ON `DatCap`.`Fk_Id_Instructor` = `Us`.`Id_Usuario`
         
         /* 4. ORGANIZACIÓN (Consumiendo Vista Organizacional) */
-        JOIN `Picade`.`vista_organizacion` `Org` 
+        JOIN `PICADE`.`vista_organizacion` `Org` 
             ON `Cap`.`Fk_Id_CatGeren` = `Org`.`Id_Gerencia`
         
         /* 5. TEMA (Consumiendo Vista Académica) */
-        JOIN `Picade`.`vista_temas_capacitacion` `Tem` 
+        JOIN `PICADE`.`vista_temas_capacitacion` `Tem` 
             ON `Cap`.`Fk_Id_Cat_TemasCap` = `Tem`.`Id_Tema`
         
         /* 6. SEDE (Consumiendo Vista de Infraestructura) */
-        JOIN `Picade`.`vista_sedes` `Sede` 
+        JOIN `PICADE`.`vista_sedes` `Sede` 
             ON `DatCap`.`Fk_Id_CatCases_Sedes` = `Sede`.`Id_Sedes`
         
         /* 7. MODALIDAD (Consumiendo Vista de Modalidad) */
-        JOIN `Picade`.`vista_modalidad_capacitacion` `Moda` 
+        JOIN `PICADE`.`vista_modalidad_capacitacion` `Moda` 
             ON `DatCap`.`Fk_Id_CatModalCap` = `Moda`.`Id_Modalidad`
         
         /* 8. ESTATUS (Consumiendo Vista de Ciclo de Vida) */
-        JOIN `Picade`.`vista_estatus_capacitacion` `EstCap` 
+        JOIN `PICADE`.`vista_estatus_capacitacion` `EstCap` 
             ON `DatCap`.`Fk_Id_CatEstCap` = `EstCap`.`Id_Estatus_Capacitacion`;
 
 /* --- VERIFICACIÓN DE LA VISTA (QA RÁPIDO) --- */
@@ -278,7 +278,7 @@ CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Gestion_de_Participantes` AS
+VIEW `PICADE`.`Vista_Gestion_de_Participantes` AS
     SELECT 
         /* =================================================================================
            SECCIÓN A: IDENTIDAD TRANSACCIONAL (PRIMARY KEYS & HANDLES)
@@ -422,7 +422,7 @@ VIEW `Picade`.`Vista_Gestion_de_Participantes` AS
            CAPA 1: LA TABLA DE HECHOS (FACT TABLE)
            Es el núcleo de la vista. Contiene la relación física entre IDs.
            --------------------------------------------------------------------------------- */
-        `Picade`.`capacitaciones_participantes` `Rel`
+        `PICADE`.`capacitaciones_participantes` `Rel`
         
         /* ---------------------------------------------------------------------------------
            CAPA 2: ENLACE AL CONTEXTO DEL CURSO (INNER JOIN)
@@ -434,29 +434,29 @@ VIEW `Picade`.`Vista_Gestion_de_Participantes` AS
            Al unir por el ID del DETALLE, garantizamos que el alumno está ligado a la 
            ejecución específica (Fecha/Hora/Instructor) y no al concepto abstracto del curso.
            --------------------------------------------------------------------------------- */
-        INNER JOIN `Picade`.`Vista_Capacitaciones` `VC`
+        INNER JOIN `PICADE`.`Vista_Capacitaciones` `VC`
             ON `Rel`.`Fk_Id_DatosCap` = `VC`.`Id_Detalle_de_Capacitacion`
             
         /* ---------------------------------------------------------------------------------
            CAPA 3: ENLACE A LA IDENTIDAD (INNER JOIN)
            Resolución del ID de Usuario (`Fk_Id_Usuario`) a datos legibles (Nombre, Ficha).
            --------------------------------------------------------------------------------- */
-        INNER JOIN `Picade`.`vista_usuarios` `UsPart`
+        INNER JOIN `PICADE`.`vista_usuarios` `UsPart`
             ON `Rel`.`Fk_Id_Usuario` = `UsPart`.`Id_Usuario`
             
         /* ---------------------------------------------------------------------------------
            CAPA 4: ENLACE A LA SEMÁNTICA DE ESTATUS (INNER JOIN)
            Resolución del código de estatus (`Fk_Id_CatEstPart`) a texto de negocio.
            --------------------------------------------------------------------------------- */
-        INNER JOIN `Picade`.`vista_estatus_participante` `EstPart`
+        INNER JOIN `PICADE`.`vista_estatus_participante` `EstPart`
             ON `Rel`.`Fk_Id_CatEstPart` = `EstPart`.`Id_Estatus_Participante`
 
 		/* 4. Datos del Creador (UsCrea) - ¡ESTO FALTABA! */
-        LEFT JOIN `Picade`.`vista_usuarios` `UsCrea`
+        LEFT JOIN `PICADE`.`vista_usuarios` `UsCrea`
             ON `Rel`.`Fk_Id_Usuario_Created_By` = `UsCrea`.`Id_Usuario`
 
         /* 5. Datos del Modificador (UsMod) - ¡ESTO FALTABA! */
-        LEFT JOIN `Picade`.`vista_usuarios` `UsMod`
+        LEFT JOIN `PICADE`.`vista_usuarios` `UsMod`
             ON `Rel`.`Fk_Id_Usuario_Updated_By` = `UsMod`.`Id_Usuario`;
 
 /* --- VERIFICACIÓN RÁPIDA --- */
@@ -1000,7 +1000,7 @@ BEGIN
                 COALESCE(`DC`.`AsistentesReales`, 0), 
                 (
                 SELECT COUNT(*)
-                FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+                FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
                 WHERE `CP`.`Fk_Id_DatosCap` = `DC`.`Id_DatosCap` 
                 AND `CP`.`Fk_Id_CatEstPart` != 5)
             )
@@ -1012,10 +1012,10 @@ BEGIN
         /* Fecha del curso más lejano en el calendario para ese año. */
         MAX(`DC`.`Fecha_Fin`)              AS `Ultima_Actividad`
 
-    FROM `Picade`.`DatosCapacitaciones` `DC` -- Tabla Operativa (Hijo)
+    FROM `PICADE`.`DatosCapacitaciones` `DC` -- Tabla Operativa (Hijo)
     
     /* JOIN con el Padre (Necesario para agrupar por Folio Único y ver el Soft Delete Global) */
-    INNER JOIN `Picade`.`Capacitaciones` `Cap` 
+    INNER JOIN `PICADE`.`Capacitaciones` `Cap` 
         ON `DC`.`Fk_Id_Capacitacion` = `Cap`.`Id_Capacitacion`
     
     /* --------------------------------------------------------------------------------------------
@@ -1030,7 +1030,7 @@ BEGIN
        -------------------------------------------------------------------------------------------- */
     INNER JOIN (
         SELECT MAX(`Id_DatosCap`) as `MaxId` 
-        FROM `Picade`.`DatosCapacitaciones` 
+        FROM `PICADE`.`DatosCapacitaciones` 
         GROUP BY `Fk_Id_Capacitacion`
     ) `Latest` ON `DC`.`Id_DatosCap` = `Latest`.`MaxId`
 
@@ -1225,11 +1225,11 @@ THIS_PROC: BEGIN
        FASE 2: ORIGEN DE DATOS Y RELACIONES (RELATIONAL ASSEMBLY)
        Objetivo: Construir el objeto de datos uniendo las entidades normalizadas.
        ============================================================================================ */
-    FROM `Picade`.`Vista_Capacitaciones` `VC`
+    FROM `PICADE`.`Vista_Capacitaciones` `VC`
     
     /* [JOIN 1 - JERARQUÍA PADRE]: Conexión con el Expediente Maestro (`Capacitaciones`).
        Necesario para conocer el estatus global (`Activo`) y la Gerencia dueña del proceso. */
-    INNER JOIN `Picade`.`Capacitaciones` `Cap` 
+    INNER JOIN `PICADE`.`Capacitaciones` `Cap` 
         ON `VC`.`Id_Capacitacion` = `Cap`.`Id_Capacitacion`
 
     /* [JOIN 2 - FILTRO DE ACTUALIDAD]: "MAX ID SNAPSHOT STRATEGY"
@@ -1243,10 +1243,10 @@ THIS_PROC: BEGIN
        ------------------------------------------------------------------------------------ */
     INNER JOIN (
         SELECT Id_DatosCap, Activo 
-        FROM `Picade`.`DatosCapacitaciones`
+        FROM `PICADE`.`DatosCapacitaciones`
         WHERE Id_DatosCap IN (
             SELECT MAX(Id_DatosCap) 
-            FROM `Picade`.`DatosCapacitaciones` 
+            FROM `PICADE`.`DatosCapacitaciones` 
             GROUP BY Fk_Id_Capacitacion
         )
     ) `Latest_Row` ON `VC`.`Id_Detalle_de_Capacitacion` = `Latest_Row`.`Id_DatosCap`
@@ -1449,17 +1449,17 @@ THIS_PROC: BEGIN
        FASE 2: ORIGEN DE DATOS Y RELACIONES (RELATIONAL ASSEMBLY)
        Propósito: Ensamblar la vista maestra asegurando integridad histórica.
        ============================================================================================ */
-    FROM `Picade`.`Vista_Capacitaciones` `VC`
+    FROM `PICADE`.`Vista_Capacitaciones` `VC`
     
     /* [JOIN 1]: ENLACE CON PADRE (Para leer Estatus Global `Cap.Activo`) */
-    INNER JOIN `Picade`.`Capacitaciones` `Cap` 
+    INNER JOIN `PICADE`.`Capacitaciones` `Cap` 
         ON `VC`.`Id_Capacitacion` = `Cap`.`Id_Capacitacion`
 
     /* [JOIN 2]: FILTRO DE ACTUALIDAD (MAX ID SNAPSHOT)
        Evita traer versiones obsoletas del mismo folio. Solo la última foto es válida. */
     INNER JOIN (
         SELECT MAX(Id_DatosCap) as MaxId 
-        FROM `Picade`.`DatosCapacitaciones` 
+        FROM `PICADE`.`DatosCapacitaciones` 
         GROUP BY Fk_Id_Capacitacion
     ) `Latest_Row` ON `VC`.`Id_Detalle_de_Capacitacion` = `Latest_Row`.MaxId
 
@@ -1584,7 +1584,7 @@ THIS_PROC: BEGIN
                 COALESCE(`DC`.`AsistentesReales`, 0), 
                 (
 				SELECT COUNT(*) 
-                FROM `Picade`.`Capacitaciones_Participantes` `CP` 
+                FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
 				WHERE `CP`.`Fk_Id_DatosCap` = `DC`.`Id_DatosCap`
                 AND `CP`.`Fk_Id_CatEstPart` != 5)
             )
@@ -1593,20 +1593,20 @@ THIS_PROC: BEGIN
     /* ============================================================================================
        FASE 2: ORIGEN DE DATOS (JOINS & SNAPSHOT)
        ============================================================================================ */
-    FROM `Picade`.`DatosCapacitaciones` `DC`
+    FROM `PICADE`.`DatosCapacitaciones` `DC`
 
     /* Join con Padre para obtener la Gerencia */
-    INNER JOIN `Picade`.`Capacitaciones` `Cap` 
+    INNER JOIN `PICADE`.`Capacitaciones` `Cap` 
         ON `DC`.`Fk_Id_Capacitacion` = `Cap`.`Id_Capacitacion`
 
     /* Join con Catálogo de Gerencias (Para obtener Clave y Nombre) */
-    INNER JOIN `Picade`.`Cat_Gerencias_Activos` `Ger` 
+    INNER JOIN `PICADE`.`Cat_Gerencias_Activos` `Ger` 
         ON `Cap`.`Fk_Id_CatGeren` = `Ger`.`Id_CatGeren`
 
     /* Join de Unicidad (Latest Snapshot) */
     INNER JOIN (
         SELECT MAX(`Id_DatosCap`) as `MaxId` 
-        FROM `Picade`.`DatosCapacitaciones` 
+        FROM `PICADE`.`DatosCapacitaciones` 
         GROUP BY `Fk_Id_Capacitacion`
     ) `Latest` ON `DC`.`Id_DatosCap` = `Latest`.`MaxId`
 
@@ -1866,30 +1866,30 @@ THIS_PROC: BEGIN
     /* ------------------------------------------------------------------------------------------------
        ORIGEN DE DATOS Y ESTRATEGIA DE VINCULACIÓN (JOIN STRATEGY)
        ------------------------------------------------------------------------------------------------ */
-    FROM `Picade`.`DatosCapacitaciones` `DC` -- [FUENTE PRIMARIA]: El detalle específico solicitado
+    FROM `PICADE`.`DatosCapacitaciones` `DC` -- [FUENTE PRIMARIA]: El detalle específico solicitado
     
     /* JOIN 1: VISTA MAESTRA (Abstraction Layer) */
     /* Usamos la vista para obtener nombres pre-formateados y evitar repetir lógica de concatenación */
-    INNER JOIN `Picade`.`Vista_Capacitaciones` `VC` 
+    INNER JOIN `PICADE`.`Vista_Capacitaciones` `VC` 
         ON `DC`.`Id_DatosCap` = `VC`.`Id_Detalle_de_Capacitacion`
     
     /* JOIN 2: TABLA PADRE (Source of Truth) */
     /* Vital para obtener el Estatus Global y los datos de auditoría de creación original */
-    INNER JOIN `Picade`.`Capacitaciones` `Cap`      
+    INNER JOIN `PICADE`.`Capacitaciones` `Cap`      
         ON `DC`.`Fk_Id_Capacitacion` = `Cap`.`Id_Capacitacion`
     
     /* JOIN 3: RESOLUCIÓN DE AUDITORÍA (EDITOR) */
     /* Conectamos la FK del HIJO (`DatosCapacitaciones`) con Usuarios -> InfoPersonal */
-    LEFT JOIN `Picade`.`Usuarios` `U_Editor`        
+    LEFT JOIN `PICADE`.`Usuarios` `U_Editor`        
         ON `DC`.`Fk_Id_Usuario_DatosCap_Created_by` = `U_Editor`.`Id_Usuario`
-    LEFT JOIN `Picade`.`Info_Personal` `IP_Editor`  
+    LEFT JOIN `PICADE`.`Info_Personal` `IP_Editor`  
         ON `U_Editor`.`Fk_Id_InfoPersonal` = `IP_Editor`.`Id_InfoPersonal`
 
     /* JOIN 4: RESOLUCIÓN DE AUDITORÍA (CREADOR) */
     /* Conectamos la FK del PADRE (`Capacitaciones`) con Usuarios -> InfoPersonal */
-    LEFT JOIN `Picade`.`Usuarios` `U_Creator`       
+    LEFT JOIN `PICADE`.`Usuarios` `U_Creator`       
         ON `Cap`.`Fk_Id_Usuario_Cap_Created_by` = `U_Creator`.`Id_Usuario`
-    LEFT JOIN `Picade`.`Info_Personal` `IP_Creator` 
+    LEFT JOIN `PICADE`.`Info_Personal` `IP_Creator` 
         ON `U_Creator`.`Fk_Id_InfoPersonal` = `IP_Creator`.`Id_InfoPersonal`
     
     /* FILTRO MAESTRO */
@@ -1965,7 +1965,7 @@ THIS_PROC: BEGIN
         /* [NUEVO] Agregamos la justificación para verla en la tabla */
         `Nota_Auditoria`              AS `Justificacion`
 
-    FROM `Picade`.`Vista_Gestion_de_Participantes`
+    FROM `PICADE`.`Vista_Gestion_de_Participantes`
 	
     -- Filtro estricto por la instancia del curso.
     WHERE `Id_Detalle_de_Capacitacion` = _Id_Detalle_Capacitacion
@@ -2018,16 +2018,16 @@ THIS_PROC: BEGIN
         /* Bandera de Vigencia Real (Solo la última versión tendrá 1, el resto 0) */
         `H_VC`.`Estatus_del_Registro`       AS `Es_Vigente`
 
-    FROM `Picade`.`Vista_Capacitaciones` `H_VC`
+    FROM `PICADE`.`Vista_Capacitaciones` `H_VC`
     
     /* JOIN MANUAL PARA AUDITORÍA HISTÓRICA */
     /* Necesario porque la Vista no expone los IDs de usuario creador por defecto.
        Vamos a las tablas físicas para recuperar quién creó cada versión antigua. */
-    LEFT JOIN `Picade`.`DatosCapacitaciones` `H_DC` 
+    LEFT JOIN `PICADE`.`DatosCapacitaciones` `H_DC` 
         ON `H_VC`.`Id_Detalle_de_Capacitacion` = `H_DC`.`Id_DatosCap`
-    LEFT JOIN `Picade`.`Usuarios` `H_U`             
+    LEFT JOIN `PICADE`.`Usuarios` `H_U`             
         ON `H_DC`.`Fk_Id_Usuario_DatosCap_Created_by` = `H_U`.`Id_Usuario`
-    LEFT JOIN `Picade`.`Info_Personal` `H_IP`       
+    LEFT JOIN `PICADE`.`Info_Personal` `H_IP`       
         ON `H_U`.`Fk_Id_InfoPersonal` = `H_IP`.`Id_InfoPersonal`
     
     /* FILTRO DE AGRUPACIÓN: Trae a todos los registros vinculados al mismo PADRE descubierto en el Bloque 1 */

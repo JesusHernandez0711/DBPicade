@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
@@ -58,13 +58,13 @@ use Picade;
    - Estatus:           1 = Visible/Activo, 0 = Borrado Lógico (del Municipio).
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Direcciones`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Direcciones`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Direcciones` AS
+VIEW `PICADE`.`Vista_Direcciones` AS
     SELECT 
         `Mun`.`Id_Municipio` AS `Id_Municipio`,
         `Mun`.`Codigo` AS `Codigo_Municipio`,
@@ -75,9 +75,9 @@ VIEW `Picade`.`Vista_Direcciones` AS
         `Pais`.`Nombre` AS `Nombre_Pais`,
         `Mun`.`Activo` AS `Estatus`
     FROM
-        ((`Picade`.`Municipio` `Mun`
-        JOIN `Picade`.`Estado` `Est` ON (`Mun`.`Fk_Id_Estado` = `Est`.`Id_Estado`))
-        JOIN `Picade`.`Pais` `Pais` ON (`Est`.`Fk_Id_Pais` = `Pais`.`Id_Pais`));
+        ((`PICADE`.`Municipio` `Mun`
+        JOIN `PICADE`.`Estado` `Est` ON (`Mun`.`Fk_Id_Estado` = `Est`.`Id_Estado`))
+        JOIN `PICADE`.`Pais` `Pais` ON (`Est`.`Fk_Id_Pais` = `Pais`.`Id_Pais`));
 
 /* ============================================================================================
    PROCEDIMIENTO: SP_RegistrarUbicaciones
@@ -139,6 +139,7 @@ VIEW `Picade`.`Vista_Direcciones` AS
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_RegistrarUbicaciones$$
+
 CREATE PROCEDURE SP_RegistrarUbicaciones(
     IN _Codigo_Municipio VARCHAR(50),   /* Código del Municipio (OBLIGATORIO en formulario) */
     IN _Nombre_Municipio VARCHAR(255),  /* Nombre del Municipio (OBLIGATORIO) */
@@ -462,6 +463,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_ConsultarPaisEspecifico$$
+
 CREATE PROCEDURE SP_ConsultarPaisEspecifico(
     IN _Id_Pais INT
 )
@@ -533,6 +535,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_ConsultarEstadoEspecifico$$
+
 CREATE PROCEDURE SP_ConsultarEstadoEspecifico(
     IN _Id_Estado INT
 )
@@ -608,6 +611,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_ConsultarMunicipioEspecifico$$
+
 CREATE PROCEDURE SP_ConsultarMunicipioEspecifico(
     IN _Id_Municipio INT
 )
@@ -696,6 +700,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_ListarPaisesActivos$$
+
 CREATE PROCEDURE SP_ListarPaisesActivos()
 BEGIN
     SELECT
@@ -748,6 +753,7 @@ DELIMITER ;
 
 DELIMITER $$
 -- DROP PROCEDURE IF EXISTS SP_ListarEstadosPorPais$$
+
 CREATE PROCEDURE SP_ListarEstadosPorPais(
     IN _Id_Pais INT
 )
@@ -845,7 +851,9 @@ DELIMITER  ;
 ============================================================================================ */
 
 DELIMITER $$
+
 -- DROP PROCEDURE IF EXISTS SP_ListarMunicipiosPorEstado$$
+
 CREATE PROCEDURE SP_ListarMunicipiosPorEstado(
     IN _Id_Estado INT
 )
@@ -952,6 +960,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_ListarPaisesAdmin$$
+
 CREATE PROCEDURE SP_ListarPaisesAdmin()
 BEGIN
     SELECT
@@ -1078,6 +1087,7 @@ DELIMITER  ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_ListarMunicipiosAdminPorEstado$$
+
 CREATE PROCEDURE SP_ListarMunicipiosAdminPorEstado(
     IN _Id_Estado INT
 )
@@ -1201,6 +1211,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_RegistrarPais$$
+
 CREATE PROCEDURE SP_RegistrarPais(
     IN _Codigo VARCHAR(50),
     IN _Nombre VARCHAR(255)
@@ -1542,6 +1553,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_EditarPais$$
+
 CREATE PROCEDURE SP_EditarPais(
     IN _Id_Pais INT,
     IN _Nuevo_Codigo VARCHAR(50),
@@ -1941,6 +1953,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_CambiarEstatusPais$$
+
 CREATE PROCEDURE SP_CambiarEstatusPais(
     IN _Id_Pais INT,
     IN _Nuevo_Estatus TINYINT -- 1 = Activo, 0 = Inactivo
@@ -2225,6 +2238,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_RegistrarEstado$$
+
 CREATE PROCEDURE SP_RegistrarEstado(
     IN _Codigo      VARCHAR(50),
     IN _Nombre      VARCHAR(255),
@@ -2623,6 +2637,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_EditarEstado$$
+
 CREATE PROCEDURE SP_EditarEstado(
     IN _Id_Estado INT,
     IN _Nuevo_Codigo VARCHAR(50),
@@ -2985,6 +3000,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_CambiarEstatusEstado$$
+
 CREATE PROCEDURE SP_CambiarEstatusEstado(
     IN _Id_Estado INT,
     IN _Nuevo_Estatus TINYINT -- 1 = Activo, 0 = Inactivo
@@ -3126,6 +3142,7 @@ BEGIN
     END IF;
 
 END$$
+
 DELIMITER ;
 
 /* ============================================================================================
@@ -3158,6 +3175,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_EliminarEstadoFisico$$
+
 CREATE PROCEDURE SP_EliminarEstadoFisico(
     IN _Id_Estado INT
 )
@@ -3761,6 +3779,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_EditarMunicipio$$
+
 CREATE PROCEDURE SP_EditarMunicipio(
     IN _Id_Municipio INT,
     IN _Nuevo_Codigo VARCHAR(50),
@@ -4180,6 +4199,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS SP_CambiarEstatusMunicipio$$
+
 CREATE PROCEDURE SP_CambiarEstatusMunicipio(
     IN _Id_Municipio INT,
     IN _Nuevo_Estatus TINYINT /* 1 = Activo, 0 = Inactivo */

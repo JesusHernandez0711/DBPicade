@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
@@ -60,13 +60,13 @@ use Picade;
    - updated_at:         (DATETIME) Última modificación o cambio de estatus.
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Puestos`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Puestos`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Puestos` AS
+VIEW `PICADE`.`Vista_Puestos` AS
     SELECT 
         /* -----------------------------------------------------------------------------------
            BLOQUE 1: IDENTIDAD Y CLAVES
@@ -97,7 +97,7 @@ VIEW `Picade`.`Vista_Puestos` AS
         -- `Pto`.`updated_at`
 
     FROM
-        `Picade`.`Cat_Puestos_Trabajo` `Pto`;
+        `PICADE`.`Cat_Puestos_Trabajo` `Pto`;
 
 /* ====================================================================================================
    PROCEDIMIENTO: SP_RegistrarPuesto

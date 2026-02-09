@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
@@ -50,13 +50,13 @@ use Picade;
    - Estatus_Rol:     (TINYINT) 1 = Activo/Asignable, 0 = Revocado/Histórico.
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Roles`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Roles`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Roles` AS
+VIEW `PICADE`.`Vista_Roles` AS
     SELECT 
         /* -----------------------------------------------------------------------------------
            BLOQUE 1: IDENTIDAD Y CLAVES DE AUTORIZACIÓN
@@ -88,7 +88,7 @@ VIEW `Picade`.`Vista_Roles` AS
         -- , `Roles`.`updated_at`
 
     FROM
-        `Picade`.`Cat_Roles` `Roles`;
+        `PICADE`.`Cat_Roles` `Roles`;
 
 /* ====================================================================================================
    PROCEDIMIENTO: SP_RegistrarRol

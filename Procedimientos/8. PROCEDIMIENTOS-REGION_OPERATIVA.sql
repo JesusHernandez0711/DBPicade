@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
@@ -58,13 +58,13 @@ use Picade;
    - updated_at:          (DATETIME) Marca de tiempo de la última modificación.
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Regiones`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Regiones`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Regiones` AS
+VIEW `PICADE`.`Vista_Regiones` AS
     SELECT 
         /* -----------------------------------------------------------------------------------
            BLOQUE 1: IDENTIDAD Y CLAVES
@@ -94,7 +94,7 @@ VIEW `Picade`.`Vista_Regiones` AS
         -- `Reg`.`updated_at`
 
     FROM
-        `Picade`.`Cat_Regiones_Trabajo` `Reg`;
+        `PICADE`.`Cat_Regiones_Trabajo` `Reg`;
 
 /* ============================================================================================
    PROCEDIMIENTO: SP_RegistrarRegion

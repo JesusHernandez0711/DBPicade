@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
@@ -54,13 +54,13 @@ use Picade;
    - Estatus_Sede:               1 = Operativo, 0 = Baja Lógica.
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Sedes`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Sedes`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Sedes` AS
+VIEW `PICADE`.`Vista_Sedes` AS
     SELECT 
         /* --- Datos de Identidad --- */
         `Cases`.`Id_CatCases_Sedes`          AS `Id_Sedes`,
@@ -88,9 +88,9 @@ VIEW `Picade`.`Vista_Sedes` AS
         /* --- Metadatos de Control --- */
         `Cases`.`Activo`                     AS `Estatus_Sede`
     FROM
-        `Picade`.`Cat_Cases_Sedes` `Cases`
+        `PICADE`.`Cat_Cases_Sedes` `Cases`
         /* LEFT JOIN Estratégico: Garantiza visibilidad total incluso con fallos geográficos */
-        LEFT JOIN `Picade`.`Vista_Direcciones` `Ubi` 
+        LEFT JOIN `PICADE`.`Vista_Direcciones` `Ubi` 
             ON `Cases`.`Fk_Id_Municipio` = `Ubi`.`Id_Municipio`;
 
 /* ============================================================================================

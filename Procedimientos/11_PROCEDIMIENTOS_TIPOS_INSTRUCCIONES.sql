@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
@@ -82,7 +82,7 @@ VIEW `Vista_Tipos_Instruccion` AS
         -- `TIC`.`updated_at`           AS `Ultima_Modificacion`
 
     FROM 
-        `Picade`.`Cat_Tipos_Instruccion_Cap` `TIC`;
+        `PICADE`.`Cat_Tipos_Instruccion_Cap` `TIC`;
 
 /* ====================================================================================================
    PROCEDIMIENTO: SP_RegistrarTipoInstruccion

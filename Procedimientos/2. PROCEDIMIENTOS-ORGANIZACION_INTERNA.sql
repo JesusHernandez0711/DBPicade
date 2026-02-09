@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
@@ -56,13 +56,13 @@ use Picade;
    - Activo_Gerencia:   1 = Activo, 0 = Inactivo (Borrado Lógico).
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Organizacion`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Organizacion`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Organizacion` AS
+VIEW `PICADE`.`Vista_Organizacion` AS
     SELECT 
 		`Geren`.`Id_CatGeren` AS `Id_Gerencia`, 
 		`Geren`.`Clave` AS `Clave_Gerencia`, 
@@ -1149,7 +1149,7 @@ BEGIN
            Permite al Frontend pintar de gris o añadir "(Extinta)" a las gerencias inactivas. */
         `Activo`
 
-    FROM `Picade`.`Cat_Gerencias_Activos`
+    FROM `PICADE`.`Cat_Gerencias_Activos`
     
     /* SIN WHERE: 
        Traemos todo el historial para permitir filtrado en reportes de años anteriores. */

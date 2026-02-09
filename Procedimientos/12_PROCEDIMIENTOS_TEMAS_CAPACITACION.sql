@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
@@ -89,12 +89,12 @@ VIEW `Vista_Temas_Capacitacion` AS
         `Tem`.`Activo`               AS `Estatus_Tema`
 
     FROM 
-        `Picade`.`Cat_Temas_Capacitacion` `Tem`
+        `PICADE`.`Cat_Temas_Capacitacion` `Tem`
         
         /* LEFT JOIN ESTRATÉGICO: 
            Garantiza la visibilidad de temas 'huérfanos' (sin tipo de instrucción asignado)
            para permitir su corrección administrativa. */
-        LEFT JOIN `Picade`.`Cat_Tipos_Instruccion_Cap` `Inst` 
+        LEFT JOIN `PICADE`.`Cat_Tipos_Instruccion_Cap` `Inst` 
             ON `Tem`.`Fk_Id_CatTipoInstCap` = `Inst`.`Id_CatTipoInstCap`;
 
 /* ====================================================================================================

@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
@@ -64,13 +64,13 @@ use Picade;
                         0 = Bloqueado (Acceso denegado y oculto en selectores operativos).
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Usuarios`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Usuarios`;
 
 CREATE OR REPLACE 
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Usuarios` AS
+VIEW `PICADE`.`Vista_Usuarios` AS
     SELECT
         /* -----------------------------------------------------------------------------------
            BLOQUE 1: IDENTIDAD DIGITAL (CREDENCIALES)
@@ -107,16 +107,16 @@ VIEW `Picade`.`Vista_Usuarios` AS
         `Usuarios`.`Activo`              AS `Estatus_Usuario`
 
     FROM
-        `Picade`.`Usuarios` `Usuarios`
+        `PICADE`.`Usuarios` `Usuarios`
         
         /* JOIN 1: Vinculación Obligatoria con Datos Personales
            Garantiza que todo usuario listado tenga una ficha de RH válida. */
-        INNER JOIN `Picade`.`Info_Personal` `Info_User`
+        INNER JOIN `PICADE`.`Info_Personal` `Info_User`
             ON `Usuarios`.`Fk_Id_InfoPersonal` = `Info_User`.`Id_InfoPersonal`
             
         /* JOIN 2: Vinculación Obligatoria con Roles de Seguridad
            Garantiza que se muestre el nivel de privilegios del usuario. */
-        INNER JOIN `Picade`.`Cat_Roles` `Roles`
+        INNER JOIN `PICADE`.`Cat_Roles` `Roles`
             ON `Usuarios`.`Fk_Rol` = `Roles`.`Id_Rol`;
 
 /* ====================================================================================================

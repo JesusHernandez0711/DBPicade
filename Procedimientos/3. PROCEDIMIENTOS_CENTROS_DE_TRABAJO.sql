@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
@@ -52,13 +52,13 @@ use Picade;
    - Estatus_CT:                1 = Operativo, 0 = Baja Lógica.
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Centros_Trabajo`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Centros_Trabajo`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Centros_Trabajo` AS
+VIEW `PICADE`.`Vista_Centros_Trabajo` AS
     SELECT 
         /* Datos Propios del Centro de Trabajo */
         `CT`.`Id_CatCT`             AS `Id_CentroTrabajo`,
@@ -77,9 +77,9 @@ VIEW `Picade`.`Vista_Centros_Trabajo` AS
         /* Estatus */
         `CT`.`Activo`               AS `Estatus_CT`
     FROM
-        `Picade`.`Cat_Centros_Trabajo` `CT`
+        `PICADE`.`Cat_Centros_Trabajo` `CT`
         /* LEFT JOIN Estratégico: Permite visualizar CTs con errores de ubicación para su corrección */
-        LEFT JOIN `Picade`.`Vista_Direcciones` `Ubi` 
+        LEFT JOIN `PICADE`.`Vista_Direcciones` `Ubi` 
             ON `CT`.`Fk_Id_Municipio_CatCT` = `Ubi`.`Id_Municipio`;
 
 /* ============================================================================================

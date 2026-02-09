@@ -1,4 +1,4 @@
-USE Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS                                */
@@ -67,7 +67,7 @@ CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Estatus_Participante` AS
+VIEW `PICADE`.`Vista_Estatus_Participante` AS
     SELECT 
         /* -----------------------------------------------------------------------------------
            BLOQUE 1: IDENTIDAD Y CLAVES
@@ -97,7 +97,7 @@ VIEW `Picade`.`Vista_Estatus_Participante` AS
         -- `Est`.`updated_at`              AS `Ultima_Modificacion`
 
     FROM 
-        `Picade`.`Cat_Estatus_Participante` `Est`;
+        `PICADE`.`Cat_Estatus_Participante` `Est`;
 
 /* --- VERIFICACIÓN DE LA VISTA (QA RÁPIDO) --- */
 -- SELECT * FROM Picade.Vista_Estatus_Participante;

@@ -1,4 +1,4 @@
-use Picade;
+USE `PICADE`;
 
 /* ------------------------------------------------------------------------------------------------------ */
 /* CREACION DE VISTAS Y PROCEDIMIENTOS DE ALMACENADO PARA LA BASE DE DATOS*/
@@ -47,13 +47,13 @@ use Picade;
    - Codigo_Pais, Nombre_Pais
    ====================================================================================================== */
 
--- DROP VIEW IF EXISTS `Picade`.`Vista_Departamentos`;
+-- DROP VIEW IF EXISTS `PICADE`.`Vista_Departamentos`;
 
 CREATE OR REPLACE
     ALGORITHM = UNDEFINED 
     DEFINER = `root`@`localhost` 
     SQL SECURITY DEFINER
-VIEW `Picade`.`Vista_Departamentos` AS
+VIEW `PICADE`.`Vista_Departamentos` AS
     SELECT 
         /* --- Datos Propios del Departamento --- */
         `Dep`.`Id_CatDep`            AS `Id_Departamento`,
@@ -70,9 +70,9 @@ VIEW `Picade`.`Vista_Departamentos` AS
         -- `Ubi`.`Nombre_Pais`          AS `Nombre_Pais`,
 		`Dep`.`Activo`               AS `Estatus_Departamento`
     FROM
-        `Picade`.`Cat_Departamentos` `Dep`
+        `PICADE`.`Cat_Departamentos` `Dep`
         /* LEFT JOIN Estratégico: Previene la desaparición de registros con ubicación corrupta */
-        LEFT JOIN `Picade`.`Vista_Direcciones` `Ubi` 
+        LEFT JOIN `PICADE`.`Vista_Direcciones` `Ubi` 
             ON `Dep`.`Fk_Id_Municipio_CatDep` = `Ubi`.`Id_Municipio`;
 
 /* ============================================================================================
@@ -132,6 +132,7 @@ VIEW `Picade`.`Vista_Departamentos` AS
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS `SP_RegistrarDepartamento`$$
+
 CREATE PROCEDURE `SP_RegistrarDepartamento`(
     IN _Codigo           VARCHAR(50),
     IN _Nombre           VARCHAR(255),
@@ -406,6 +407,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS `SP_ConsultarDepartamentoEspecifico`$$
+
 CREATE PROCEDURE `SP_ConsultarDepartamentoEspecifico`(
     IN _Id_CatDep INT
 )
@@ -523,6 +525,7 @@ DELIMITER ;
 DELIMITER $$
 
 -- DROP PROCEDURE IF EXISTS `SP_ListarDepActivos`$$
+
 CREATE PROCEDURE `SP_ListarDepActivos`()
 BEGIN
     SELECT 
