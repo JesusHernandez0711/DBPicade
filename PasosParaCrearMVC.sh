@@ -2,7 +2,13 @@ sudo docker exec -it PICADE_APP php artisan serve --host=0.0.0.0 --port=8000
 
 sudo docker exec -it PICADE_APP npm run dev -- --host
 
+sudo chown -R jesus:jesus .
+
+id
+
 docker exec -it PICADE_APP php artisan make:model Usuario
+
+docker exec -it PICADE_APP php artisan config:clear
 
 docker exec -it PICADE_APP php artisan make:controller Auth/LoginController
 
