@@ -31,3 +31,7 @@ docker exec -it PICADE_APP php artisan config:clear
 docker exec -it PICADE_APP php artisan cache:clear
 
 docker exec -it PICADE_APP php artisan route:clear
+
+chmod +x setup.sh
+
+./setup.sh
