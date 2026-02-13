@@ -35,3 +35,11 @@ docker exec -it PICADE_APP php artisan route:clear
 chmod +x setup.sh
 
 ./setup.sh
+
+docker start PICADE_APP
+
+docker exec -it PICADE_APP php artisan serve --host=0.0.0.0 --port=8000
+
+docker exec -it PICADE_APP npm run dev
+
+docker exec -d PICADE_APP npm run dev
