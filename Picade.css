@@ -1,0 +1,657 @@
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ * PICADE — ESTILOS GLOBALES (MASTER SHEET)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * UBICACIÓN:  public/css/Picade.css
+ * CARGADO EN: layouts/Auth.blade.php  +  layouts/Panel.blade.php
+ *
+ * Todo estilo reutilizable entre vistas vive aquí.
+ * SECCIONES:
+ * 1-13: Componentes UI Generales (Botones, Inputs, Textos)
+ * 14-19: Arquitectura del Panel (Sidebar, Header, Layout)
+ * ══════════════════════════════════════════════════════════════════════════
+ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1. VARIABLES — Paleta Gobierno de México 2024-2030
+   ══════════════════════════════════════════════════════════════════════════ */
+:root {
+    /* Paleta Institucional */
+    --gob-negro:      #161a1d;
+    --gob-guinda:     #9b2247;
+    --gob-verde:      #1e5b4f;
+    --gob-dorado:     #a57f2c;
+    --gob-gris:       #98989A;
+    --gob-guinda-dk:  #611232;
+    --gob-verde-dk:   #002f2a;
+    --gob-crema:      #e6d194;
+    
+    /* Identidad PICADE */
+    --picade-guinda:  #731834;
+    --picade-dorado:  #bfa15f;
+    --picade-dark:    #1e1e2d;  /* Agregado para Sidebar */
+    
+    /* Dimensiones Layout */
+    --sidebar-width:  256px;
+    --header-height:  64px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2. BOTÓN GUINDA
+   ══════════════════════════════════════════════════════════════════════════ */
+.btn-guinda {
+    background: linear-gradient(135deg, var(--gob-guinda), var(--gob-guinda-dk));
+    color: #fff;
+    font-weight: 700;
+    border: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+}
+.btn-guinda:hover,
+.btn-guinda:focus {
+    background: linear-gradient(135deg, var(--gob-guinda-dk), var(--gob-guinda-dk));
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(155, 34, 71, 0.30);
+    color: #fff;
+}
+.btn-guinda:active,
+.btn-guinda.active {
+    transform: translateY(0);
+    color: #fff;
+}
+.btn-guinda:disabled {
+    opacity: 0.65;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3. BOTÓN VERDE
+   ══════════════════════════════════════════════════════════════════════════ */
+.btn-verde {
+    background: linear-gradient(135deg, var(--gob-verde), var(--gob-verde-dk));
+    color: #fff;
+    font-weight: 700;
+    border: none;
+    border-radius: 0.5rem;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+.btn-verde:hover,
+.btn-verde:focus {
+    background: linear-gradient(135deg, var(--gob-verde-dk), var(--gob-verde-dk));
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(30, 91, 79, 0.30);
+    color: #fff;
+}
+.btn-verde:active,
+.btn-verde.active {
+    transform: translateY(0);
+    color: #fff;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   4. BOTÓN DORADO
+   ══════════════════════════════════════════════════════════════════════════ */
+.btn-dorado {
+    background: linear-gradient(135deg, var(--gob-dorado), #8a6a24);
+    color: #fff;
+    font-weight: 700;
+    border: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+}
+.btn-dorado:hover,
+.btn-dorado:focus {
+    background: linear-gradient(135deg, #8a6a24, #7d6020);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(165, 127, 44, 0.25);
+    color: #fff;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   5. LINK DORADO
+   ══════════════════════════════════════════════════════════════════════════ */
+.link-dorado {
+    color: var(--gob-dorado);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+.link-dorado:hover {
+    color: var(--gob-guinda);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   6. CHECKBOX GUINDA (Override Bootstrap)
+   ══════════════════════════════════════════════════════════════════════════ */
+.form-check-input:checked {
+    background-color: var(--gob-guinda);
+    border-color: var(--gob-guinda);
+}
+.form-check-input:focus {
+    box-shadow: 0 0 0 3px rgba(155, 34, 71, 0.20);
+    border-color: var(--gob-guinda);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   7. PAGINACIÓN GUINDA (Override Bootstrap)
+   ══════════════════════════════════════════════════════════════════════════ */
+.pagination {
+    margin-bottom: 0;
+    gap: 5px;
+}
+.page-link {
+    color: var(--picade-guinda);
+    background-color: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 5px;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+}
+.page-link:hover {
+    color: #5a0e26;
+    background-color: #e9ecef;
+    border-color: #dee2e6;
+}
+.page-item.active .page-link {
+    z-index: 3;
+    color: #fff;
+    background-color: var(--picade-guinda);
+    border-color: var(--picade-guinda);
+}
+.page-item.disabled .page-link {
+    color: #6c757d;
+    pointer-events: none;
+    background-color: #fff;
+    border-color: #dee2e6;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   8. TEXTO GRADIENTE (Título PICADE)
+   ══════════════════════════════════════════════════════════════════════════ */
+.text-gradient-guinda {
+    background: linear-gradient(135deg, var(--gob-guinda) 0%, var(--gob-guinda-dk) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: 3px;
+    text-align: center;
+    margin-bottom: 1.75rem;
+    user-select: none;
+}
+@media (min-width: 576px) {
+    .text-gradient-guinda {
+        font-size: 2.25rem;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   9. SECCIÓN TÍTULO (Encabezados de formularios)
+   ══════════════════════════════════════════════════════════════════════════ */
+.section-title {
+    color: var(--gob-verde-dk);
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 2px solid var(--gob-dorado);
+    padding-bottom: 0.25rem;
+    margin-bottom: 1rem;
+    margin-top: 1.5rem;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   10. ERROR TEXT (Validación de formularios)
+   ══════════════════════════════════════════════════════════════════════════ */
+.error-text {
+    font-size: 0.75rem;
+    color: #ef4444;
+    font-weight: 500;
+    margin-top: 0.375rem;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   11. TABLAS — Contenedor redondeado
+   ══════════════════════════════════════════════════════════════════════════ */
+.rounded-table-container {
+    border-radius: 1rem !important;
+    overflow: hidden !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   12. UTILIDADES
+   ══════════════════════════════════════════════════════════════════════════ */
+.cursor-help { cursor: help; }
+.hover-scale { transition: transform 0.2s; }
+.hover-scale:hover { transform: scale(1.02); cursor: pointer; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   13. PIE INSTITUCIONAL
+   ══════════════════════════════════════════════════════════════════════════ */
+.footer-text {
+    text-align: center;
+    font-size: 0.6875rem;
+    color: rgba(255, 255, 255, 0.5);
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    margin-top: 1.5rem;
+    user-select: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   14. ESTRUCTURA PRINCIPAL (Panel Layout)
+   ══════════════════════════════════════════════════════════════════════════ */
+body {
+    background-color: #ebedef;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    overflow-x: hidden;
+    margin: 0;
+}
+
+.wrapper {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    transition: margin-left 0.3s ease;
+    margin-left: 0; /* Inicia sin margen (Sidebar cerrado) */
+}
+
+/* En escritorio, si el sidebar se abre, empuja el contenido */
+@media (min-width: 992px) {
+    .sidebar.show ~ .wrapper { 
+        margin-left: var(--sidebar-width); 
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   15. SIDEBAR (NAVEGACIÓN LATERAL)
+   ══════════════════════════════════════════════════════════════════════════ */
+.sidebar {
+    width: var(--sidebar-width);
+    height: 100vh;
+    position: fixed;
+    top: 0; 
+    left: calc(var(--sidebar-width) * -1); /* Inicia OCULTO a la izquierda */
+    background-color: var(--picade-dark);
+    color: rgba(255, 255, 255, 0.87);
+    transition: left 0.3s ease;
+    z-index: 1040;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Clase activa para mostrar el Sidebar */
+.sidebar.show { 
+    left: 0; 
+}
+
+.sidebar-header {
+    height: var(--header-height);
+    display: flex;
+    align-items: center;
+    padding: 0 1.5rem;
+    background-color: rgba(0, 0, 0, 0.2);
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.nav-link {
+    color: rgba(255, 255, 255, 0.6);
+    padding: 0.8rem 1.5rem;
+    display: flex;
+    align-items: center;
+    transition: 0.2s;
+    text-decoration: none;
+}
+
+.nav-link:hover, .nav-link.active {
+    color: #fff;
+    background-color: rgba(255,255,255,0.05);
+}
+
+.nav-link i { margin-right: 1rem; font-size: 1.2rem; }
+
+.nav-title {
+    margin-top: 1rem;
+    padding: 0.75rem 1.5rem;
+    font-size: 80%;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.4);
+    text-transform: uppercase;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   16. HEADER (BARRA SUPERIOR)
+   ══════════════════════════════════════════════════════════════════════════ */
+.header {
+    height: var(--header-height);
+    background: #fff;
+    border-bottom: 1px solid #d8dbe0;
+    display: flex;
+    align-items: center;
+    padding: 0 1.5rem;
+    justify-content: space-between;
+}
+
+.header-toggler {
+    border: 0;
+    background: transparent;
+    color: #768192;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    transition: color 0.2s;
+}
+
+.header-toggler:hover { color: var(--picade-guinda); }
+
+.header-nav-icon {
+    font-size: 1.3rem;
+    color: #768192;
+    padding: 0.5rem;
+    position: relative;
+    text-decoration: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   17. DROPDOWNS PERSONALIZADOS (Notificaciones y Perfil)
+   ══════════════════════════════════════════════════════════════════════════ */
+.custom-dropdown-menu {
+    width: 350px;
+    padding: 0;
+    border-radius: 8px;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    border: 1px solid #d8dbe0;
+}
+
+.dropdown-header-label {
+    background: #f8f9fa;
+    padding: 12px 16px;
+    font-weight: bold;
+    font-size: 0.9rem;
+    color: #4f5d73;
+    border-bottom: 1px solid #d8dbe0;
+}
+
+.dropdown-scroll-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.dropdown-footer {
+    background: #f8f9fa;
+    border-top: 1px solid #d8dbe0;
+}
+
+.dropdown-item-custom {
+    padding: 12px 16px;
+    border-bottom: 1px solid #f0f2f5;
+    display: flex;
+    align-items: flex-start;
+    text-decoration: none;
+    color: #4f5d73;
+    transition: background 0.2s;
+}
+
+.dropdown-item-custom:hover { background-color: #f0f2f5; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   18. OFFCANVAS (Menú Lateral Derecho)
+   ══════════════════════════════════════════════════════════════════════════ */
+.offcanvas-catalogs { 
+    background-color: #212529; 
+    color: white; 
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   19. RESPONSIVE UTILS
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 992px) {
+    /* En móvil, el sidebar siempre inicia oculto */
+    .sidebar { left: calc(var(--sidebar-width) * -1); }
+    /* Si se activa, se muestra sobre el contenido (z-index ya configurado en .sidebar) */
+    .sidebar.show { left: 0; }
+    /* El wrapper nunca se empuja en móvil */
+    .wrapper { margin-left: 0; }
+}
+/* ══════════════════════════════════════════════════════════════════════════
+    20. MATRIZ ACADÉMICA — COMPONENTES DINÁMICOS
+    ══════════════════════════════════════════════════════════════════════════ 
+    * @description: Control de visualización para el catálogo de cursos.
+    * @logic: Implementa el cambio de layout entre Grid y List View.
+    ══════════════════════════════════════════════════════════════════════════ */
+
+/* Contenedor de la vista de lista activa */
+.list-view-active .card-curso-wrapper {
+    transition: all 0.3s ease;
+}
+
+/* Transformación de la tarjeta a modo horizontal */
+.list-view-active .card-curso-wrapper .card {
+    flex-direction: row !important;
+    align-items: stretch;
+    min-height: 250px;
+}
+
+/* Ajuste de la cabecera en modo lista */
+.list-view-active .card-curso-wrapper .card-header {
+    width: 25%;
+    min-width: 180px;
+    border-bottom: none !important;
+    border-right: 4px solid var(--gob-dorado); 
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background-color: #f8f9fa !important;
+}
+
+/* Ajuste del cuerpo en modo lista */
+.list-view-active .card-curso-wrapper .card-body {
+    width: 75%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    padding: 1.5rem 2rem !important;
+}
+
+/* Reorganización interna en modo lista */
+.list-view-active .card-curso-wrapper .card-body .bg-light {
+    grid-column: 1 / 2;
+    margin-bottom: 0 !important;
+    align-self: center;
+}
+
+.list-view-active .card-curso-wrapper .card-body .mb-4:has(.section-title) {
+    grid-column: 2 / 3;
+    margin-bottom: 0 !important;
+}
+
+.list-view-active .card-curso-wrapper .card-body .border-top {
+    grid-column: 1 / 2;
+    margin-top: 0 !important;
+    padding-top: 1rem !important;
+}
+
+.list-view-active .card-curso-wrapper .card-body .mb-4:has(.progress) {
+    grid-column: 2 / 3;
+    margin-bottom: 0 !important;
+}
+
+.list-view-active .card-curso-wrapper .card-body .d-grid {
+    grid-column: 1 / 3;
+    margin-top: 1rem;
+}
+
+/* Responsividad en modo lista */
+@media (max-width: 992px) {
+    .list-view-active .card-curso-wrapper .card { flex-direction: column !important; }
+    .list-view-active .card-curso-wrapper .card-header {
+        width: 100%;
+        border-right: none !important;
+        border-bottom: 4px solid var(--gob-dorado) !important;
+    }
+    .list-view-active .card-curso-wrapper .card-body {
+        width: 100%;
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+    21. TRANSICIONES DE FILTRADO Y BÚSQUEDA
+    ══════════════════════════════════════════════════════════════════════════ */
+.card-curso-wrapper {
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+#inputBusquedaCursos:focus {
+    border-color: var(--gob-guinda) !important;
+    box-shadow: 0 0 0 0.25rem rgba(155, 34, 71, 0.15);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+    22. UTILIDADES DE IDENTIDAD (COLOR & SEMÁNTICA)
+    ══════════════════════════════════════════════════════════════════════════ 
+    * @description: Clases de utilidad para aplicar la paleta institucional 
+    * a elementos que no son botones (Badges, Alertas, Bordes).
+    ══════════════════════════════════════════════════════════════════════════ */
+
+/* Texto Guinda Institucional */
+.text-guinda {
+    color: var(--gob-guinda) !important;
+}
+
+/* Fondo Guinda Suave (Ideal para Badges/Contadores) */
+.bg-guinda-light {
+    background-color: rgba(155, 34, 71, 0.1) !important;
+}
+
+/* Borde Guinda */
+.border-guinda {
+    border-color: var(--gob-guinda) !important;
+}
+
+/* Fondo Guinda Sólido */
+.bg-guinda {
+    background-color: var(--gob-guinda) !important;
+    color: white !important;
+}
+
+/* Efecto de Brillo para Badges */
+.badge.bg-guinda-light {
+    letter-spacing: 0.5px;
+    font-weight: 700;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   23. COMPONENTE DE BÚSQUEDA UNIFICADA (SEARCH BAR MASTER)
+   ══════════════════════════════════════════════════════════════════════════ 
+   * @description: Estilos para las barras de búsqueda en Kárdex y Matriz.
+   * @usage: .picade-search-container
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Contenedor de la barra */
+.picade-search-group {
+    transition: all 0.3s ease;
+    border: 1px solid #dee2e6;
+}
+
+/* Efecto Focus: Borde Guinda y Sombra Suave */
+.picade-search-group:focus-within {
+    border-color: var(--gob-guinda);
+    box-shadow: 0 0 0 0.25rem rgba(155, 34, 71, 0.15) !important;
+    transform: translateY(-2px);
+}
+
+/* Input limpio sin bordes nativos */
+.picade-search-input {
+    border: none;
+    box-shadow: none !important;
+    font-size: 1rem;
+    padding-left: 10px;
+    color: var(--gob-negro);
+}
+
+/* Icono de Lupa */
+.picade-search-icon {
+    background-color: #fff;
+    border: none;
+    padding-left: 1.5rem;
+    color: var(--gob-guinda);
+}
+
+/* Botón de Limpiar (X) */
+.picade-clear-btn {
+    background-color: #fff;
+    border: none;
+    padding-right: 1.5rem;
+    color: #98989A; /* --gob-gris */
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.picade-clear-btn:hover {
+    color: var(--gob-guinda);
+}
+
+/* Fila de "Sin Resultados" */
+.no-results-row {
+    background-color: #f8f9fa;
+    color: #6c757d;
+    font-style: italic;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   24. LAYOUT DE TABLERO CENTRADO (DASHBOARD ALIGNMENT)
+   ══════════════════════════════════════════════════════════════════════════ 
+   * @description: Controla el posicionamiento absoluto en el eje Y/X para 
+   * el dashboard del participante.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.dashboard-center-wrapper {
+    /* Calculamos el alto restando el header para un centrado perfecto */
+    min-height: calc(100vh - var(--header-height) - 60px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 2rem 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   25. TARJETAS DE NAVEGACIÓN (PLATINUM CARDS)
+   ══════════════════════════════════════════════════════════════════════════ 
+   * @description: Efectos de interacción y profundidad para las opciones 
+   * principales del Dashboard.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.card-navigation {
+    transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+    cursor: pointer;
+    border: none !important;
+}
+
+/* Efecto de Elevación y Escala */
+.card-navigation:hover {
+    transform: translateY(-15px) scale(1.03);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Animación sutil de pulso para el icono de fondo */
+.card-navigation:hover i {
+    animation: pulse-icon 2s infinite ease-in-out;
+}
+
+@keyframes pulse-icon {
+    0% { transform: scale(1) rotate(-10deg); opacity: 0.25; }
+    50% { transform: scale(1.1) rotate(-5deg); opacity: 0.40; }
+    100% { transform: scale(1) rotate(-10deg); opacity: 0.25; }
+}
+
+/* Ajuste de opacidad en hover para textos secundarios */
+.card-navigation:hover p {
+    opacity: 1 !important;
+    transition: opacity 0.3s ease;
+}

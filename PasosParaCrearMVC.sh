@@ -43,3 +43,17 @@ docker exec -it PICADE_APP php artisan serve --host=0.0.0.0 --port=8000
 docker exec -it PICADE_APP npm run dev
 
 docker exec -d PICADE_APP npm run dev
+
+sudo apt install tmux
+
+chmod +x IniciarServers.sh
+./IniciarServers.sh
+
+docker exec -it PICADE_APP php artisan config:clear
+
+docker compose exec app php artisan optimize:clear
+
+docker compose exec app php artisan config:clear
+docker compose exec app php artisan cache:clear
+docker compose exec app php artisan view:clear
+docker compose exec app php artisan route:clear
