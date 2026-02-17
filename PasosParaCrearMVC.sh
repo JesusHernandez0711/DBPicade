@@ -60,3 +60,9 @@ docker compose exec app php artisan route:clear
 
 #Genera un sensor automatizado.
 sudo docker exec -it PICADE_APP php artisan make:middleware UpdateLastLogin
+
+# Borrar el cache de construcción (build) que se interrumpió
+sudo docker builder prune -a -f
+
+#Installar tmux en el contenedor
+sudo docker exec -u root PICADE_APP apt update && sudo docker exec -u root PICADE_APP apt install -y tmux
