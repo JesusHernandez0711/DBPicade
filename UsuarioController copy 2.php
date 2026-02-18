@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+<<<<<<< HEAD
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -12,6 +13,14 @@ use Illuminate\Contracts\Encryption\DecryptException;
 use App\Models\Usuario;
 use Carbon\Carbon;
 
+=======
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use App\Models\Usuario;
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
 
 /*
  * █ CONTROLADOR MAESTRO DE IDENTIDAD (IDENTITY MASTER CONTROLLER - IMC)
@@ -336,7 +345,11 @@ class UsuarioController extends Controller
         // ─────────────────────────────────────────────────────────────────────
         // FASE 3: EJECUCIÓN BLINDADA DE PROCEDIMIENTO ALMACENADO
         // ─────────────────────────────────────────────────────────────────────
+<<<<<<< HEAD
         try {
+=======
+        //try {
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
             // Definimos la sentencia SQL.
             // Usamos '?' (Placeholders) para evitar INYECCIÓN SQL. 
             // Laravel escapará automáticamente cualquier caracter malicioso.
@@ -386,7 +399,11 @@ class UsuarioController extends Controller
             return redirect()->route('Usuarios.index')
                 ->with('success', 'Colaborador registrado exitosamente. ID: #' . ($resultado[0]->Id_Usuario ?? 'OK'));
 
+<<<<<<< HEAD
         } catch (\Illuminate\Database\QueryException $e) {
+=======
+        /*} catch (\Illuminate\Database\QueryException $e) {
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
             // ─────────────────────────────────────────────────────────────────
             // FASE 5: MANEJO DE EXCEPCIONES Y LIMPIEZA (ROLLBACK & CLEANUP)
             // ─────────────────────────────────────────────────────────────────
@@ -409,7 +426,11 @@ class UsuarioController extends Controller
             // 'withInput()' rellena los campos con lo que escribió (para que no tenga que escribir todo de nuevo).
             // 'with()' envía el mensaje de error para mostrar la alerta roja.
             return back()->withInput()->with($tipoAlerta, $mensajeSP);
+<<<<<<< HEAD
         }
+=======
+        }*/
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
     }
 
     /*
@@ -425,6 +446,7 @@ class UsuarioController extends Controller
      * @param  Request $request Contenedor del token encriptado 'token_id'.
      * @return \Illuminate\View\View | \Illuminate\Http\RedirectResponse
      */
+<<<<<<< HEAD
 
     /*
      * █ VISOR Y PREPARADOR DE EXPEDIENTE (PLATINUM FORENSIC STANDARD)
@@ -533,6 +555,8 @@ class UsuarioController extends Controller
     }
 
     /*
+=======
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
     public function show(Request $request)
     {
         //try {
@@ -576,6 +600,7 @@ class UsuarioController extends Controller
             }
 
             // [FASE 5]: DESPACHO DE VISTA (SSR DELIVERY)
+<<<<<<< HEAD
             // [FASE 5]: DESPACHO DE VISTA SEGÚN CONTEXTO (ROUTING LOGIC)
             // Detectamos si el botón que presionó el Admin fue "Ver" o "Editar"
             $esEdicion = $request->has('modo_edicion'); 
@@ -589,6 +614,15 @@ class UsuarioController extends Controller
             ]);
 
         } catch (DecryptException $e) {
+=======
+            return view('panel.admin.usuarios.show', [
+                'user'      => $user,
+                'catalogos' => $catalogos,
+                'readonly'  => true // Bloqueo de integridad en visor
+            ]);
+
+        /*} catch (DecryptException $e) {
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
             // Error en la integridad del Token (Posible manipulación)
             return redirect()->route('Usuarios.index')
                 ->with('danger', 'ALERTA DE SEGURIDAD: El token de acceso es inválido o ha expirado.');
@@ -603,6 +637,7 @@ class UsuarioController extends Controller
             // Error genérico inesperado
             return redirect()->route('Usuarios.index')
                 ->with('danger', 'INCIDENTE TÉCNICO: Ocurrió un error al reconstruir el expediente académico.');
+<<<<<<< HEAD
         }
     }*/
 
@@ -723,6 +758,93 @@ class UsuarioController extends Controller
     }
 
     /*
+=======
+        }*/
+    }
+
+    /*
+     * █ INTERFAZ DE EDICIÓN (EDIT)
+     * ─────────────────────────────────────────────────────────────────────────
+     * Prepara el entorno para la modificación de datos maestros.
+     *
+     * @purpose Permitir la corrección de errores o actualización de estatus laboral.
+     * @logic
+     * 1. Recupera datos actuales del usuario (Pre-llenado del formulario).
+     * 2. Recupera catálogos vigentes (Contexto para cambios).
+     *
+     * @param string $id ID del usuario a editar.
+     * @return \Illuminate\View\View
+     */
+    /*
+     * █ EDITOR DE EXPEDIENTE BLINDADO (POST)
+     * ─────────────────────────────────────────────────────────────────────────
+     * Recibe un Token encriptado (POST) para evitar la enumeración de IDs en la URL.
+     * Corrige la ruta de la vista a 'panel.admin.usuarios.edit'.
+     */
+    public function edit(Request $request)
+    {
+        //try {
+            // 1. Desencriptar el ID (Forensic Unsealing)
+            // Si el usuario intenta cambiar el token hash manualmente, esto fallará.
+            $idDesencriptado = Crypt::decryptString($request->token_id);
+
+            // 2. Ejecutar consulta con el ID real recuperado
+            $usuario = DB::select('CALL SP_ConsultarUsuarioPorAdmin(?)', [$idDesencriptado]);
+
+            if (empty($usuario)) {
+                return redirect()->route('Usuarios.index')
+                    ->with('danger', 'El usuario solicitado no existe.');
+            }
+
+            // 3. Cargar datos contextuales (Dropdowns)
+            $catalogos = $this->cargarCatalogos();
+
+            // 4. Retornar Vista (RUTA CORREGIDA)
+            // Cambiamos 'admin.Usuarios.edit' por 'panel.admin.usuarios.edit'
+            return view('panel.admin.usuarios.edit', [
+                'usuario'   => $usuario[0],
+                'catalogos' => $catalogos,
+            ]);
+
+        /*} catch (DecryptException $e) {
+            // Token manipulado o inválido
+            return redirect()->route('Usuarios.index')
+                ->with('danger', 'ALERTA DE SEGURIDAD: Token de edición inválido.');
+        } catch (\Exception $e) {
+            // Errores generales (BD, etc)
+            return redirect()->route('Usuarios.index')
+                ->with('danger', 'Error al cargar el editor: ' . $e->getMessage());
+        }*/
+    }
+
+    /*public function edit(string $id)
+    {
+        //try {
+            // 1. Obtención del registro objetivo
+            $usuario = DB::select('CALL SP_ConsultarUsuarioPorAdmin(?)', [$id]);
+
+            if (empty($usuario)) {
+                return redirect()->route('Usuarios.index')
+                    ->with('danger', 'El usuario solicitado no existe.');
+            }
+
+            // 2. Carga de datos contextuales (Dropdowns)
+            $catalogos = $this->cargarCatalogos();
+
+            return view('admin.Usuarios.edit', [
+                'usuario'   => $usuario[0],
+                'catalogos' => $catalogos,
+            ]);
+
+        /*} catch (\Illuminate\Database\QueryException $e) {
+            $mensajeSP = $this->extraerMensajeSP($e->getMessage());
+            return redirect()->route('Usuarios.index')
+                ->with('danger', $mensajeSP);
+        }
+    }*/
+
+    /**
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
      * █ MOTOR DE ACTUALIZACIÓN DE USUARIO (UPDATE)
      * ─────────────────────────────────────────────────────────────────────────
      * Ejecuta la modificación de datos maestros de un usuario existente.
@@ -737,7 +859,11 @@ class UsuarioController extends Controller
      * @param Request $request Datos del formulario de edición.
      * @param string $id ID del usuario a modificar.
      * @return \Illuminate\Http\RedirectResponse
+<<<<<<< HEAD
      *
+=======
+     */
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
     public function update(Request $request, string $id)
     {
         // ─────────────────────────────────────────────────────────────────────
@@ -815,12 +941,21 @@ class UsuarioController extends Controller
             return redirect()->route('Usuarios.show', $id)
                 ->with('success', $mensaje);
 
+<<<<<<< HEAD
         } catch (\Illuminate\Database\QueryException $e) {
             $mensajeSP = $this->extraerMensajeSP($e->getMessage());
             $tipoAlerta = $this->clasificarAlerta($mensajeSP);
             return back()->withInput()->with($tipoAlerta, $mensajeSP);
         }
     }*/
+=======
+        /*} catch (\Illuminate\Database\QueryException $e) {
+            $mensajeSP = $this->extraerMensajeSP($e->getMessage());
+            $tipoAlerta = $this->clasificarAlerta($mensajeSP);
+            return back()->withInput()->with($tipoAlerta, $mensajeSP);
+        }*/
+    }
+>>>>>>> 21d996d99f097ecc4bf8985375730a3752e1fc37
 
     /**
      * █ ELIMINACIÓN DESTRUCTIVA (HARD DELETE)
