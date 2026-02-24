@@ -1,6 +1,5 @@
-
 /* ====================================================================================================
-   PROCEDIMIENTO: SP_ObtenerMatrizPICADE_
+   PROCEDIMIENTO: SP_ObtenerMatrizPICADE
    ====================================================================================================
    
    1. FICHA TÉCNICA (TECHNICAL DATASHEET)
@@ -95,7 +94,7 @@ THIS_PROC: BEGIN
 		`VC`.`Nombre_Subdireccion`,
         
 		`VC`.`Id_Gerencia`,
-        `VC`.`Clave_Gerencia_Solicitante`  AS `Gerencia`,   -- Cliente interno (ej: GSPSST)
+        `VC`.`Clave_Gerencia`  AS `Gerencia`,   -- Cliente interno (ej: GSPSST)
         `VC`.`Nombre_Gerencia`,
         
 		`VC`.`Id_Tema`,
@@ -106,23 +105,9 @@ THIS_PROC: BEGIN
         `VC`.`Tipo_Instruccion`,
         `VC`.`Duracion_Horas`			   AS `Duracion`,
         
+		`VC`.`Id_Instructor`,
         `VC`.`Ficha_Instructor`,
-        /*`VC`.`Nombre_Instructor`           AS `Instructor`, -- Responsable de la ejecución
-        `Us`.`Ficha_Usuario`                AS `Ficha_Instructor`,
-        `Us`.`Apellido_Paterno_Instructor`             AS `Apellido_Paterno_Instructor`,
-        `Us`.`Apellido_Materno_Instructor`             AS `Apellido_Materno_Instructor`,
-        `Us`.`Nombre_Instructor`                       AS `Nombre_Instructor`,*/
-        /*CONCAT(
-			`VC`.`Apellido_Paterno_Instructor`, ' ',
-            `VC`.`Apellido_Materno_Instructor`, ' ', 
-            `VC`.`Nombre_Instructor`
-		) AS `Instructor`,*/
-        
-         CONCAT(
-			 IFNULL(`VC`.`Nombre_Instructor`,''), ' ',
-			 IFNULL(`VC`.`Apellido_Materno_Instructor`,''), ' ',
-			 IFNULL(`VC`.`Apellido_Paterno_Instructor`,'')
-         ) AS `Instructor`,
+        `VC`.`Nombre_Instructor`			AS `Instructor`,
 		
 		`VC`.`Id_Sedes`,
         `VC`.`Codigo_Sede`,                  --  ¡AÑADE ESTA LÍNEA PARA QUE LARAVEL LO VEA! 
@@ -135,11 +120,10 @@ THIS_PROC: BEGIN
 		   GRUPO C: METADATOS TEMPORALES
            Usados por el Frontend para agrupar visualmente (ej: Encabezados de Mes).
 		------------------------------------------------------------------ */
-        
 		`VC`.`Fecha_Inicio`,                                -- Día 1 del curso
 		`VC`.`Fecha_Fin`,                                   -- Día N del curso
 
-         YEAR(`VC`.`Fecha_Inicio`)          AS `Anio`,       -- Año Fiscal
+		YEAR(`VC`.`Fecha_Inicio`)          AS `Anio`,       -- Año Fiscal
 		MONTHNAME(`VC`.`Fecha_Inicio`)     AS `Mes`, -- Etiqueta legible (Enero, Febrero...)
         
         /* ------------------------------------------------------------------
@@ -150,7 +134,6 @@ THIS_PROC: BEGIN
            [KPIs DE PLANEACIÓN - PLANIFICADO]
            Datos estáticos definidos al crear el curso. Representan la "Meta".
            ----------------------------------------------------------------------------------------- */
-
         -- Capacidad máxima teórica del aula o sala virtual.
         `VC`.`Asistentes_Meta`             AS `Cupo_Programado_de_Asistentes`,
         
@@ -163,7 +146,6 @@ THIS_PROC: BEGIN
            [KPIs DE OPERACIÓN - REALIDAD FÍSICA]
            Datos dinámicos calculados en tiempo real basados en la tabla de hechos.
            ----------------------------------------------------------------------------------------- */
-        
         /* [CONTEO DE SISTEMA]: 
            Número exacto de filas en la tabla `Capacitaciones_Participantes` con estatus activo.
            Es la "verdad informática" de cuántos registros existen. */
@@ -194,8 +176,13 @@ THIS_PROC: BEGIN
            GRUPO E: ESTADO VISUAL
            Textos pre-calculados en la Vista para mostrar al usuario.
            ------------------------------------------------------------------ */
-		`VC`.`Id_Estatus_Capacitacion`	   AS `Id_Estatus`, -- Mapeo numérico (4=Fin, 8=Canc, etc)
-        `VC`.`Estatus_Curso`               AS `Estatus_Texto`, -- (ej: "FINALIZADO", "CANCELADO")
+		/* -----------------------------------------------------------------------------------
+           BLOQUE 6: CONTROL DE ESTADO Y CICLO DE VIDA
+           El corazón del flujo de trabajo. Determina si el curso está vivo, muerto o finalizado.
+           ----------------------------------------------------------------------------------- */
+		`VC`.`Id_Estatus`, -- Mapeo numérico (4=Fin, 8=Canc, etc) Útil para lógica de colores en UI (ej: CANC = Rojo) CRÍTICO: ID necesario para el match() en Blade
+        `VC`.`Codigo_Estatus_Capacitacion`,
+        `VC`.`Estatus_Curso_Capacitacion`, -- (ej: "FINALIZADO", "CANCELADO") Estado operativo (En curso, Finalizado, etc).
 
         `VC`.`Observaciones`               AS `Bitacora_Notas`,           -- Justificación de esta versión
 

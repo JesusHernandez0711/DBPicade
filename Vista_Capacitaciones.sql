@@ -81,16 +81,16 @@ VIEW `PICADE`.`Vista_Capacitaciones` AS
         `Org`.`Nombre_Subdireccion`,
         
         `Org`.`Id_Gerencia`,
-        `Org`.`Clave_Gerencia`              AS `Clave_Gerencia_Solicitante`,
+        `Org`.`Clave_Gerencia`,
         `Org`.`Nombre_Gerencia`,
         
         `Tem`.`Id_Tema`,
-        `Tem`.`Codigo_Tema`                 AS `Codigo_Tema`,
-        `Tem`.`Nombre_Tema`                 AS `Nombre_Tema`,
+        `Tem`.`Codigo_Tema`,
+        `Tem`.`Nombre_Tema`,
         `Tem`.`Descripcion`					AS `Descripcion_Tema`,
         
         `Tem`.`Nombre_Tipo_Instruccion`     AS `Tipo_Instruccion`, -- Heredado de la vista de temas
-        `Tem`.`Duracion_Horas`              AS `Duracion_Horas`,
+        `Tem`.`Duracion_Horas`,
 
         /* -----------------------------------------------------------------------------------
            BLOQUE 3: METAS DE ASISTENCIA (KPIs)
@@ -128,76 +128,40 @@ VIEW `PICADE`.`Vista_Capacitaciones` AS
                  WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` AND `CP`.`Fk_Id_CatEstPart` != 5)
             )
         )                                   AS `Cupo_Disponible`,
-
-        /*`Cap`.`Asistentes_Programados`      AS `Asistentes_Meta`,
-        `DatCap`.`AsistentesReales`         AS `Asistentes_Reales`,
-        
-		 [NUEVO] CÁLCULO EN TIEMPO REAL: Participantes Activos (Sin Bajas) 
-        Nota: Usamos 'DatCap.Id_DatosCap' para correlacionar, no 'VC'   
-		 A) ACTIVOS 
-        (
-			SELECT COUNT(*) FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
-			WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` 
-            AND `CP`.`Fk_Id_CatEstPart` != 5 -- Excluir BAJA (Hardcoded ID 5)
-        )                                   AS `Participantes_Activos`,
-
-         B) BAJAS 
-        (
-			SELECT COUNT(*) 
-            FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
-			WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` 
-				AND `CP`.`Fk_Id_CatEstPart` = 5 -- Excluir BAJA (Hardcoded ID 5)
-        )                                   AS `Participantes_Baja`,
-
-         C) CUPO DISPONIBLE (Cálculo Matemático Puro) 
-        (
-            `Cap`.`Asistentes_Programados` - 
-            (
-            SELECT COUNT(*) 
-            FROM `PICADE`.`Capacitaciones_Participantes` `CP` 
-			WHERE `CP`.`Fk_Id_DatosCap` = `DatCap`.`Id_DatosCap` 
-            AND `CP`.`Fk_Id_CatEstPart` != 5 -- Excluir BAJA (Hardcoded ID 5)
-            )
-        )                                   AS `Cupo_Disponible`,*/
         
         /* -----------------------------------------------------------------------------------
            BLOQUE 4: PERSONAL DOCENTE (INSTRUCTOR)
            Datos del instructor asignado en el detalle operativo actual.
            Se concatena el nombre para facilitar la visualización en reportes.
            ----------------------------------------------------------------------------------- */
-		`Us`.`Id_Usuario`,
+		`Us`.`Id_Usuario`					AS `Id_Instructor`,
         `Us`.`Ficha_Usuario`                AS `Ficha_Instructor`,
-        `Us`.`Apellido_Paterno`             AS `Apellido_Paterno_Instructor`,
-        `Us`.`Apellido_Materno`             AS `Apellido_Materno_Instructor`,
-        `Us`.`Nombre`                       AS `Nombre_Instructor`,
-        /* Campo calculado de conveniencia para grids */
-        /*CONCAT(`Us`.`Nombre`, ' ', `Us`.`Apellido_Paterno`, ' ', `Us`.`Apellido_Materno`) AS `Nombre_Completo_Instructor`,
-        CONCAT(`VC`.`Apellido_Paterno_Instructor`, ' ', `VC`.`Apellido_Materno_Instructor`, ' ', `VC`.`Nombre_Instructor`) AS `Instructor_Asignado`,*/
-
+        `Us`.`Nombre_Completo`				AS `Nombre_Instructor`,
+        
         /* -----------------------------------------------------------------------------------
            BLOQUE 5: LOGÍSTICA TEMPORAL Y ESPACIAL (OPERACIÓN)
            Datos críticos para el calendario y la logística.
            ----------------------------------------------------------------------------------- */
-        `DatCap`.`Fecha_Inicio`             AS `Fecha_Inicio`,
-        `DatCap`.`Fecha_Fin`                AS `Fecha_Fin`,
+        `DatCap`.`Fecha_Inicio`,
+        `DatCap`.`Fecha_Fin`,
         
         `Sede`.`Id_Sedes`,
         `Sede`.`Codigo_Sedes`               AS `Codigo_Sede`,
         `Sede`.`Nombre_Sedes`               AS `Nombre_Sede`,
         
         `Moda`.`Id_Modalidad`,
-        `Moda`.`Codigo_Modalidad`           AS `Codigo_Modalidad`,
-        `Moda`.`Nombre_Modalidad`           AS `Nombre_Modalidad`,
+        `Moda`.`Codigo_Modalidad`,
+        `Moda`.`Nombre_Modalidad`,
 
         /* -----------------------------------------------------------------------------------
            BLOQUE 6: CONTROL DE ESTADO Y CICLO DE VIDA
            El corazón del flujo de trabajo. Determina si el curso está vivo, muerto o finalizado.
            ----------------------------------------------------------------------------------- */
-		`EstCap`.`Id_Estatus_Capacitacion`,
-        `EstCap`.`Codigo_Estatus`           AS `Codigo_Estatus`, -- Útil para lógica de colores en UI (ej: CANC = Rojo)
-        `EstCap`.`Nombre_Estatus`           AS `Estatus_Curso`,
+		`EstCap`.`Id_Estatus_Capacitacion`		AS `Id_Estatus`, -- Mapeo numérico (4=Fin, 8=Canc, etc) Útil para lógica de colores en UI (ej: CANC = Rojo) CRÍTICO: ID necesario para el match() en Blade
+        `EstCap`.`Codigo_Estatus`           AS `Codigo_Estatus_Capacitacion`, -- Útil para lógica de colores en UI (ej: CANC = Rojo)
+        `EstCap`.`Nombre_Estatus`           AS `Estatus_Curso_Capacitacion`,
         
-        `DatCap`.`Observaciones`            AS `Observaciones`,
+        `DatCap`.`Observaciones`,
         
         /* Bandera de Soft Delete del DETALLE operativo. 
            Nota: La cabecera también tiene 'Activo', pero el detalle manda en la operación diaria. */
@@ -211,13 +175,6 @@ VIEW `PICADE`.`Vista_Capacitaciones` AS
         `Creator_VU`.`Ficha_Usuario`                 AS `CreadoPor_Ficha`,  
         `Creator_VU`.`Nombre_Completo`               AS `CreadoPor_Nombre`,
         
-		/*`U_Creator`.`Ficha_Usuario` AS `CreadoPor_Ficha`,  -- AGREGAR ESTA LÍNEA 
-		 [NUEVO]: Resolución del nombre del creador */
-        /*CONCAT(
-			IFNULL(`IP_Creator`.`Nombre`,''), ' ', 
-            IFNULL(`IP_Creator`.`Apellido_Paterno`,'')
-		) AS `CreadoPor_Nombre`,*/
-        
         `DatCap`.`updated_at` AS `ActualzadoElDia`,
                 
         `DatCap`.`Fk_Id_Usuario_DatosCap_Updated_by` AS `ActualizadoPor`,
@@ -225,13 +182,6 @@ VIEW `PICADE`.`Vista_Capacitaciones` AS
         /* Reutilizamos directamente tu Vista_Usuarios para Editor */
         `Editor_VU`.`Ficha_Usuario`                  AS `ActualizadoPor_Ficha`, 
         `Editor_VU`.`Nombre_Completo`                AS `ActualizadoPor_Nombre`
-
-        /*`U_Editor`.`Ficha_Usuario` AS `ActualizadoPor_Ficha`, --  AGREGAR ESTA LÍNEA 
-		 [NUEVO]: Resolución del nombre del editor */
-        /*CONCAT(
-			IFNULL(`IP_Editor`.`Nombre`,''), ' ', 
-            IFNULL(`IP_Editor`.`Apellido_Paterno`,'')
-		) AS `ActualizadoPor_Nombre`*/
 
     FROM
         /* -----------------------------------------------------------------------------------
@@ -274,19 +224,6 @@ VIEW `PICADE`.`Vista_Capacitaciones` AS
 		/* -----------------------------------------------------------------------------------
            NUEVOS JOINS DE AUDITORÍA (LEFT JOINS PARA NO PERDER DATOS)
            ----------------------------------------------------------------------------------- */
-        /*
-        -- 9. CREADOR ORIGINAL
-        LEFT JOIN `PICADE`.`Usuarios` `U_Creator` 
-            ON `Cap`.`Fk_Id_Usuario_Cap_Created_by` = `U_Creator`.`Id_Usuario`
-        LEFT JOIN `PICADE`.`Info_Personal` `IP_Creator` 
-            ON `U_Creator`.`Fk_Id_InfoPersonal` = `IP_Creator`.`Id_InfoPersonal`
-
-        -- 10. ÚLTIMO EDITOR 
-        LEFT JOIN `PICADE`.`Usuarios` `U_Editor` 
-            ON `DatCap`.`Fk_Id_Usuario_DatosCap_Updated_by` = `U_Editor`.`Id_Usuario`
-        LEFT JOIN `PICADE`.`Info_Personal` `IP_Editor` 
-            ON `U_Editor`.`Fk_Id_InfoPersonal` = `IP_Editor`.`Id_InfoPersonal`;*/
-
 		/* -----------------------------------------------------------------------------------
            NUEVOS JOINS DE AUDITORÍA (CONSUMIENDO TU VISTA_USUARIOS)
            ----------------------------------------------------------------------------------- */

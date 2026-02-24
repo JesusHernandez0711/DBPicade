@@ -1,4 +1,3 @@
-
 /* ══════════════════════════════════════════════════════════════════════════════════════════════════════════
    PROCEDIMIENTO: SP_ConsultarCursosImpartidos
    ══════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -69,7 +68,7 @@ ProcCursosImpart: BEGIN
         `VC`.`Nombre_Subdireccion`,
         
         `VC`.`Id_Gerencia`,
-        `VC`.`Clave_Gerencia_Solicitante`  AS `Gerencia`,
+        `VC`.`Clave_Gerencia`  AS `Gerencia`,
         `VC`.`Nombre_Gerencia`,
         
 		-- [BLOQUE 2: METADATA ACADÉMICA]
@@ -81,16 +80,9 @@ ProcCursosImpart: BEGIN
         `VC`.`Duracion_Horas`              AS `Duracion`, -- Valor curricular para el instructor.
         
 		-- El instructor es él mismo, pero enviamos los datos para consistencia del objeto
+		`VC`.`Id_Instructor`,
         `VC`.`Ficha_Instructor`,
-
-         CONCAT(
-			 IFNULL(`VC`.`Nombre_Instructor`,''), ' ',
-			 IFNULL(`VC`.`Apellido_Materno_Instructor`,''), ' ',
-			 IFNULL(`VC`.`Apellido_Paterno_Instructor`,'')
-         ) AS `Instructor`,
-         
-        -- CONCAT(`VC`.`Apellido_Paterno_Instructor`, ' ', `VC`.`Apellido_Materno_Instructor`, ' ', `VC`.`Nombre_Instructor`) AS `Instructor`,
-
+        `VC`.`Nombre_Instructor`			AS `Instructor`,
         
         -- [BLOQUE 3: LOGÍSTICA DE OPERACIÓN]
         `VC`.`Id_Sedes`,
@@ -115,11 +107,18 @@ ProcCursosImpart: BEGIN
         `VC`.`Participantes_Baja`          AS `Total_de_Bajas`,
         `VC`.`Cupo_Disponible`,
         
-        -- GRUPO E: ESTADO VISUAL
-		-- [BLOQUE 5: ESTADO Y CICLO DE VIDA]
-
-        `VC`.`Id_Estatus_Capacitacion`     AS `Id_Estatus`, --  CRÍTICO: ID necesario para el match() en Blade
-        `VC`.`Estatus_Curso`               AS `Estatus_Texto`,	-- Estado operativo (En curso, Finalizado, etc).
+        /* ------------------------------------------------------------------
+           GRUPO E: ESTADO VISUAL
+           Textos pre-calculados en la Vista para mostrar al usuario.
+           ------------------------------------------------------------------ */
+		/* -----------------------------------------------------------------------------------
+           BLOQUE 6: CONTROL DE ESTADO Y CICLO DE VIDA
+           El corazón del flujo de trabajo. Determina si el curso está vivo, muerto o finalizado.
+           ----------------------------------------------------------------------------------- */
+		`VC`.`Id_Estatus`, -- Mapeo numérico (4=Fin, 8=Canc, etc) Útil para lógica de colores en UI (ej: CANC = Rojo) CRÍTICO: ID necesario para el match() en Blade
+        `VC`.`Codigo_Estatus_Capacitacion`,
+        `VC`.`Estatus_Curso_Capacitacion`, -- (ej: "FINALIZADO", "CANCELADO") Estado operativo (En curso, Finalizado, etc).
+        
         `VC`.`Observaciones`               AS `Bitacora_Notas`,
 
 		/* En este se detalla por quien y cuando fue asignado como instructor Eso en el caso que la capacitación 
@@ -149,18 +148,29 @@ ProcCursosImpart: BEGIN
            Anteriormente manejábamos  un case En el que definíamos que si era 1 significaba que es él instructor actual 
            pero si era 0 significa que fue reemplazado esa logica la aplicaremos desde laravel nosotros le enviaremos los datos crudos.
            */
-        `DC`.`Activo`                      AS `Es_Version_Vigente` -- Bandera específica de versión
+        -- `DC`.`Activo`                      AS `Es_Version_Vigente` -- Bandera específica de versión
+		`VC`.`Estatus_del_Detalle`			AS `Es_Version_Vigente`
         
         /*
         Datos de la capacitación como saber en qué día fue creada la capacitación o 
         registrada en el sistema cuándo fue La Última Vez que la actualizaron 
         Y por quién  No estoy muy convencido demostrar esos datos por eso los silencie.
-        
         `VC`.`CreadoElDia`,
+        
         `VC`.`CreadoPor`,
         
+        `VC`. `CreadoPor_Ficha`,
+        
+        `VC`.`CreadoPor_Nombre`,
+        
         `VC`.`ActualzadoElDia`,
-        `VC`.`ActualizadoPor`*/
+                
+        `VC`.`ActualizadoPor`,
+        
+        `VC`.`ActualizadoPor_Ficha`,
+
+		`VC`. `ActualizadoPor_Nombre`
+        */
         
     FROM `PICADE`.`Vista_Capacitaciones` `VC`
     

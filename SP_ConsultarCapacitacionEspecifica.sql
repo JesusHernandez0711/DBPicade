@@ -1,5 +1,4 @@
-
-   /* ====================================================================================================
+/* ====================================================================================================
    PROCEDIMIENTO: SP_ConsultarCapacitacionEspecifica_
    ====================================================================================================
    
@@ -122,33 +121,18 @@ THIS_PROC: BEGIN
            Se entregan pares ID + TEXTO para "hidratar" los formularios de edición (v-model).
            ----------------------------------------------------------- */
         /* [Recurso Humano] */
-		
-        -- `DC`.`Fk_Id_Instructor`            AS `Id_Instructor`, -- ID para el Select
-        -- `VC`.`Nombre_Completo_Instructor`  AS `Instructor`,             -- Texto para leer
-        
-        -- CONCAT(IFNULL(`VC`.`Nombre_Instructor`,''), ' ', IFNULL(`VC`.`Apellido_Paterno_Instructor`,''), ' ', IFNULL(`VC`.`Apellido_Materno_Instructor`,'')) AS `Instructor`,
-        
-        `VC`.`Id_Usuario`,
+		`VC`.`Id_Instructor`,
         `VC`.`Ficha_Instructor`,
-         CONCAT(
-			 IFNULL(`VC`.`Nombre_Instructor`,''), ' ',
-			 IFNULL(`VC`.`Apellido_Materno_Instructor`,''), ' ',
-			 IFNULL(`VC`.`Apellido_Paterno_Instructor`,'')
-         ) AS `Instructor`,
+        `VC`.`Nombre_Instructor`			AS `Instructor`,
         
         /* [Infraestructura] */
-        -- `DC`.`Fk_Id_CatCases_Sedes`        AS `Id_Sede_Selected`,
-        -- `VC`.`Nombre_Sede`                 AS `Sede`,
-        
-        `VC`.`Id_Sedes`,
-        `VC`.`Codigo_Sede`,                  -- █ ¡AÑADE ESTA LÍNEA PARA QUE LARAVEL LO VEA! █
+		`VC`.`Id_Sedes`,
+        `VC`.`Codigo_Sede`,                  --  ¡AÑADE ESTA LÍNEA PARA QUE LARAVEL LO VEA! 
 		`VC`.`Nombre_Sede`                 AS `Sede`,       -- Lugar de ejecución
         
-        /* [Metodología] */
-        -- `DC`.`Fk_Id_CatModalCap`           AS `Id_Modalidad_Selected`,
-		
-        `VC`.`Id_Modalidad`,
-        `VC`.`Nombre_Modalidad`            AS `Modalidad`,
+        /* [Metodología] */		
+		`VC`.`Id_Modalidad`,
+		`VC`.`Nombre_Modalidad`            AS `Modalidad`,
         
         /* -----------------------------------------------------------
            GRUPO C: DATOS DE EJECUCIÓN (ESCALARES)
@@ -159,7 +143,6 @@ THIS_PROC: BEGIN
         
 		YEAR(`VC`.`Fecha_Inicio`)          AS `Anio`,       -- Año Fiscal
 		MONTHNAME(`VC`.`Fecha_Inicio`)     AS `Mes`, -- Etiqueta legible (Enero, Febrero...)
-
 
         /* ------------------------------------------------------------------
            GRUPO D: ANALÍTICA (KPIs)
@@ -182,7 +165,6 @@ THIS_PROC: BEGIN
            [KPIs DE OPERACIÓN - REALIDAD FÍSICA]
            Datos dinámicos calculados en tiempo real basados en la tabla de hechos.
            ----------------------------------------------------------------------------------------- */
-        
         /* [CONTEO DE SISTEMA]: 
            Número exacto de filas en la tabla `Capacitaciones_Participantes` con estatus activo.
            Es la "verdad informática" de cuántos registros existen. */
@@ -208,20 +190,24 @@ THIS_PROC: BEGIN
            Este valor es el que decide si se permiten nuevas inscripciones.
            Puede ser negativo si hubo sobrecupo autorizado. */
          `VC`.`Cupo_Disponible`,
-        
-		/* [Ciclo de Vida] */
-        -- `DC`.`Fk_Id_CatEstCap`             AS `Id_Estatus_Selected`,
-        -- `VC`.`Estatus_Curso`               AS `Estatus_del_Curso`,
-        -- `VC`.`Codigo_Estatus`              AS `Codigo_Estatus_Global`, -- Meta-dato para colorear badges en UI
-        
+                
         /* ------------------------------------------------------------------
            GRUPO E: ESTADO VISUAL
            Textos pre-calculados en la Vista para mostrar al usuario.
            ------------------------------------------------------------------ */
-		`VC`.`Id_Estatus_Capacitacion`	   AS `Id_Estatus`, -- Mapeo numérico (4=Fin, 8=Canc, etc)
-        `VC`.`Estatus_Curso`               AS `Estatus_Texto`, -- (ej: "FINALIZADO", "CANCELADO")
-
-
+        /* [Estatus Global]: Estado del contenedor padre (ej: Si el curso está CANCELADO, esto lo indica). */
+        /* ------------------------------------------------------------------
+           GRUPO E: ESTADO VISUAL
+           Textos pre-calculados en la Vista para mostrar al usuario.
+           ------------------------------------------------------------------ */
+		/* -----------------------------------------------------------------------------------
+           BLOQUE 6: CONTROL DE ESTADO Y CICLO DE VIDA
+           El corazón del flujo de trabajo. Determina si el curso está vivo, muerto o finalizado.
+           ----------------------------------------------------------------------------------- */
+		`VC`.`Id_Estatus`, -- Mapeo numérico (4=Fin, 8=Canc, etc) Útil para lógica de colores en UI (ej: CANC = Rojo) CRÍTICO: ID necesario para el match() en Blade
+        `VC`.`Codigo_Estatus_Capacitacion`,
+        `VC`.`Estatus_Curso_Capacitacion`, -- (ej: "FINALIZADO", "CANCELADO") Estado operativo (En curso, Finalizado, etc).
+        
 		`VC`.`Observaciones`               AS `Bitacora_Notas`,           -- Justificación de esta versión
         
         /* -----------------------------------------------------------
@@ -233,7 +219,8 @@ THIS_PROC: BEGIN
 		-- GRUPO F: BANDERAS LÓGICAS Y AUDITORÍA
         -- este es para conocer si la capacitacion ya esta archivada, ya que si esta en 0 significa 
         -- que ya finalizo su ciclo de vida
-        `Cap`.`Activo`                     AS `Estatus_Del_Registro`,  -- 1 = Expediente Vivo / 0 = Archivado Globalmente
+        -- `Cap`.`Activo`                     AS `Estatus_Del_Registro`,  -- 1 = Expediente Vivo / 0 = Archivado Globalmente
+		`Cap`.`Activo`                     AS `Estatus_Del_Registro`, -- 1 = Expediente Vivo / 0 = Archivado (Soft Delete)
         
         /* BANDERA DE VISIBILIDAD (Soft Delete Check) 
            Permite al Frontend aplicar estilos (ej. opacidad) a registros archivados.
@@ -244,7 +231,8 @@ THIS_PROC: BEGIN
            Anteriormente manejábamos  un case En el que definíamos que si era 1 significaba que es él instructor actual 
            pero si era 0 significa que fue reemplazada esa logica la aplicaremos desde laravel nosotros le enviaremos los datos crudos.
            */
-        `DC`.`Activo`                      AS `Estatus_Del_Detalle`,   -- 1 = Versión Vigente / 0 = Versión Histórica (Snapshot)
+        -- `DC`.`Activo`                      AS `Estatus_Del_Detalle`,   -- 1 = Versión Vigente / 0 = Versión Histórica (Snapshot)
+        `VC`.`Estatus_del_Detalle`,
 
         /* ------------------------------------------------------------------
            GRUPO F: BANDERAS LÓGICAS (LOGIC FLAGS - CRITICAL)
@@ -253,27 +241,30 @@ THIS_PROC: BEGIN
            
            GRUPO F: AUDITORÍA FORENSE DIFERENCIADA (ORIGEN VS VERSIÓN ACTUAL)
            Aquí aplicamos la lógica de "Quién hizo qué" separando los momentos.
-           ------------------------------------------------------------------ */
-           
-		
+           ------------------------------------------------------------------ */       
+
+        `VC`.`Estatus_del_Detalle`,
+        
 		/* [MOMENTO 1: EL ORIGEN] - Datos provenientes de la Tabla PADRE (`Capacitaciones`) */
         /* ¿Cuándo nació el folio CAP-202X? */
-         `VC`.`CreadoElDia`,
-		
-        /* ¿Quién creó el folio? (Join Manual hacia el creador del Padre) */
-         `VC`.`CreadoPor`,
-         
-         CONCAT(
-			IFNULL(`IP_Creator`.`Nombre`,''), ' ', 
-            IFNULL(`IP_Creator`.`Apellido_Paterno`,'')
-		) AS `Creado_Originalmente_Por`,
+        `VC`.`CreadoElDia`,
         
-         `VC`.`ActualzadoElDia`,
+		/* ¿Quién creó el folio? (Join Manual hacia el creador del Padre) */
+        `VC`.`CreadoPor`,
+        
+        `VC`. `CreadoPor_Ficha`,
+        
+        `VC`.`CreadoPor_Nombre`,
+        
+
+        /* ¿Quién y cuando firmó esta modificación? (Join hacia el creador del Hijo) */        
+        `VC`.`ActualzadoElDia`,
                 
-         `VC`.`ActualizadoPor`,
-         
-        /* ¿Quién firmó esta modificación? (Join hacia el creador del Hijo) */
-        CONCAT(IFNULL(`IP_Editor`.`Nombre`,''), ' ', IFNULL(`IP_Editor`.`Apellido_Paterno`,'')) AS `Ultima_Actualizacion_Por`
+        `VC`.`ActualizadoPor`,
+        
+        `VC`.`ActualizadoPor_Ficha`,
+
+		`VC`. `ActualizadoPor_Nombre`
 
     /* ------------------------------------------------------------------------------------------------
        ORIGEN DE DATOS Y ESTRATEGIA DE VINCULACIÓN (JOIN STRATEGY)
@@ -289,21 +280,7 @@ THIS_PROC: BEGIN
     /* Vital para obtener el Estatus Global y los datos de auditoría de creación original */
     INNER JOIN `PICADE`.`Capacitaciones` `Cap`      
         ON `DC`.`Fk_Id_Capacitacion` = `Cap`.`Id_Capacitacion`
-    
-    /* JOIN 3: RESOLUCIÓN DE AUDITORÍA (EDITOR) */
-    /* Conectamos la FK del HIJO (`DatosCapacitaciones`) con Usuarios -> InfoPersonal */
-    LEFT JOIN `PICADE`.`Usuarios` `U_Editor`        
-        ON `DC`.`Fk_Id_Usuario_DatosCap_Created_by` = `U_Editor`.`Id_Usuario`
-    LEFT JOIN `PICADE`.`Info_Personal` `IP_Editor`  
-        ON `U_Editor`.`Fk_Id_InfoPersonal` = `IP_Editor`.`Id_InfoPersonal`
-
-    /* JOIN 4: RESOLUCIÓN DE AUDITORÍA (CREADOR) */
-    /* Conectamos la FK del PADRE (`Capacitaciones`) con Usuarios -> InfoPersonal */
-    LEFT JOIN `PICADE`.`Usuarios` `U_Creator`       
-        ON `Cap`.`Fk_Id_Usuario_Cap_Created_by` = `U_Creator`.`Id_Usuario`
-    LEFT JOIN `PICADE`.`Info_Personal` `IP_Creator` 
-        ON `U_Creator`.`Fk_Id_InfoPersonal` = `IP_Creator`.`Id_InfoPersonal`
-    
+        
     /* FILTRO MAESTRO */
     WHERE `DC`.`Id_DatosCap` = _Id_Detalle_Capacitacion;
 
@@ -320,7 +297,6 @@ THIS_PROC: BEGIN
            [IDENTIFICADORES DE ACCIÓN - CRUD HANDLES]
            Datos técnicos ocultos necesarios para las operaciones de actualización.
            ----------------------------------------------------------------------------------------- */
-        
         -- Llave Primaria (PK) de la relación Alumno-Curso.
         -- Este ID se envía al `SP_EditarParticipanteCapacitacion` o `SP_CambiarEstatus...`.
         `Id_Registro_Participante`    AS `Id_Inscripcion`,      -- PK para operaciones CRUD sobre el alumno
@@ -329,19 +305,12 @@ THIS_PROC: BEGIN
            [INFORMACIÓN VISUAL DEL PARTICIPANTE]
            Datos para que el humano identifique al alumno.
            ----------------------------------------------------------------------------------------- */
-        
         -- ID Corporativo o Número de Empleado. Vital para diferenciar homónimos.
-        `Ficha_Participante`          AS `Ficha`,
-
-        -- Nombre Completo Normalizado.
-        -- Se concatenan Paterno + Materno + Nombre para alinearse con los estándares
-        -- de listas de asistencia impresas (orden alfabético por apellido).
-        /* Nombre formateado estilo lista de asistencia oficial (Paterno Materno Nombre) */
-        CONCAT(
-            IFNULL(`Nombre_Pila_Participante`,''), ' ',
-            IFNULL(`Ap_Materno_Participante`,''), ' ', 
-            IFNULL(`Ap_Paterno_Participante`,'')
-		) AS `Nombre_Alumno`,
+		/* [Ficha]: ID único corporativo del empleado. Clave de búsqueda principal. */
+        `Id_Participante`,
+        `Ficha_Participante`,  
+        /* Componentes del nombre desglosados para ordenamiento (Sorting) en tablas */
+        `Nombre_Participante`, -- Hereda el CONCAT_WS de la raíz
 
         /* -----------------------------------------------------------------------------------------
            [INPUTS ACADÉMICOS EDITABLES]
@@ -350,38 +319,45 @@ THIS_PROC: BEGIN
         
         -- Porcentaje de Asistencia (0.00 - 100.00).
         -- Alimenta la barra de progreso visual en el Frontend.
-        `Porcentaje_Asistencia`       AS `Asistencia`,          -- 0-100%
+        `Asistencia`,          -- 0-100%
 
         -- Calificación Final Asentada (0.00 - 100.00).
         -- Si es NULL, el Frontend debe mostrar un input vacío o "Sin Evaluar".
-        `Calificacion_Numerica`       AS `Calificacion`,        -- 0-10
+        `Calificacion`,        -- 0-10 -- Nota decimal asentada.
 
         -- [AUDITORÍA FORENSE INYECTADA]:
         -- Contiene la cadena histórica de cambios (Timestamp + Motivo).
         -- Permite al coordinador saber por qué un alumno tiene una calificación extraña
         -- o por qué fue reactivado después de una baja.
         /* [NUEVO] Agregamos la justificación para verla en la tabla */
-        `Nota_Auditoria`              AS `Justificacion`,
+        `Justificacion`,
 
         /* -----------------------------------------------------------------------------------------
            [ESTADO DEL CICLO DE VIDA Y AUDITORÍA]
            Datos de control de flujo y trazabilidad.
            ----------------------------------------------------------------------------------------- */
-        
         -- Estatus Semántico (Texto).
         -- Valores posibles: 'INSCRITO', 'ASISTIÓ', 'APROBADO', 'REPROBADO', 'BAJA'.
         -- Se usa para determinar el color de la fila (ej: Baja = Rojo, Aprobado = Verde).
-        
         `Id_Estatus_Participante`,
-        `Resultado_Final`             AS `Estatus_Alumno`,      -- Texto: Aprobado/Reprobado/Baja
+        `Codigo_Estatus_Participante`,
+        `Nombre_Estatus_Participante`,      -- Texto: Aprobado/Reprobado/Baja
 
         -- Descripción Técnica.
         -- Explica la regla de negocio aplicada (ej: "Reprobado por inasistencia > 20%").
         -- Se usa típicamente en un Tooltip al pasar el mouse sobre el estatus.
-        `Detalle_Resultado`           AS `Descripcion_Estatus`,  -- Tooltip explicativo
+        `Descripcion_Estatus_Participante`,  -- Tooltip explicativo -- Regla de negocio aplicada.
         
+		/* =================================================================================
+           SECCIÓN E: AUDITORÍA FORENSE (Trazabilidad del Dato)
+           Objetivo: Responder ¿Quién? y ¿Cuándo?
+           ================================================================================= */
+		/* --- SECCIÓN E: AUDITORÍA (Simplificada con Vista_Usuarios) --- */
+		-- 1. CREACIÓN (Inscripción Original)
 		`Fecha_Inscripcion`,
         `Inscrito_Por`,
+        
+		-- 2. MODIFICACIÓN (Último cambio de nota o estatus) 
         `Fecha_Ultima_Modificacion`,
         `Modificado_Por`
 
@@ -411,25 +387,21 @@ THIS_PROC: BEGIN
         -- `H_VC`.`Fecha_Creacion_Detalle`     AS `Fecha_Movimiento`,
         `H_DC`.`created_at`                 AS `Fecha_Movimiento`,
 
+		/* --- RESPONSABLE DEL CAMBIO (AUDITORÍA PLATINUM V.5) --- */
+        /* Heredamos el nombre y la ficha procesados desde la Raíz */
+        `U_Hist`.`Ficha_Usuario`            AS `Responsable_Ficha`,
+		`U_Hist`.`Nombre_Completo`          AS `Responsable_Cambio`,
         
-        /* Responsable del Cambio (Auditoría Histórica) */
-        /* Obtenido mediante JOINs manuales en este bloque */
-        CONCAT(IFNULL(`H_IP`.`Apellido_Paterno`,''), ' ', IFNULL(`H_IP`.`Nombre`,'')) AS `Responsable_Cambio`,
-        
-        /* Razón del Cambio (El "Por qué") */
+        /* --- EL "POR QUÉ" --- */
         `H_VC`.`Observaciones`              AS `Justificacion_Cambio`,
         
         /* Snapshot de Datos Clave (Para previsualización rápida en la lista) */
-        -- `H_VC`.`Nombre_Completo_Instructor` AS `Instructor_En_Ese_Momento`,
-        
-        CONCAT(
-			IFNULL(`H_VC`.`Nombre_Instructor`,''), ' ',
-            IFNULL(`H_VC`.`Apellido_Paterno_Instructor`,''), ' ', 
-            IFNULL(`H_VC`.`Apellido_Materno_Instructor`,'')
-		) AS `Instructor_En_Ese_Momento`,
-        
+		/* --- SNAPSHOT VISUAL RÁPIDO --- */
+        /* Heredamos el instructor formateado desde la Vista Maestra Histórica */
+        `H_VC`.`Nombre_Instructor`          AS `Instructor_En_Ese_Momento`,
+
         `H_VC`.`Nombre_Sede`                AS `Sede_En_Ese_Momento`,
-        `H_VC`.`Estatus_Curso`              AS `Estatus_En_Ese_Momento`,
+        `H_VC`.`Estatus_Curso_Capacitacion` AS `Estatus_En_Ese_Momento`,
         `H_VC`.`Fecha_Inicio`               AS `Fecha_Inicio_Programada`,
         `H_VC`.`Fecha_Fin`                  AS `Fecha_Fin_Programada`,
         
@@ -446,15 +418,13 @@ THIS_PROC: BEGIN
 
     FROM `PICADE`.`Vista_Capacitaciones` `H_VC`
     
-    /* JOIN MANUAL PARA AUDITORÍA HISTÓRICA */
-    /* Necesario porque la Vista no expone los IDs de usuario creador por defecto.
-       Vamos a las tablas físicas para recuperar quién creó cada versión antigua. */
-    LEFT JOIN `PICADE`.`DatosCapacitaciones` `H_DC` 
+	/* JOIN: Obtener Timestamp y ID Creador de la versión física */
+    INNER JOIN `PICADE`.`DatosCapacitaciones` `H_DC` 
         ON `H_VC`.`Id_Detalle_de_Capacitacion` = `H_DC`.`Id_DatosCap`
-    LEFT JOIN `PICADE`.`Usuarios` `H_U`             
-        ON `H_DC`.`Fk_Id_Usuario_DatosCap_Created_by` = `H_U`.`Id_Usuario`
-    LEFT JOIN `PICADE`.`Info_Personal` `H_IP`       
-        ON `H_U`.`Fk_Id_InfoPersonal` = `H_IP`.`Id_InfoPersonal`
+        
+    /* JOIN: Sincronización con Identidad Raíz (Sustituye 2 JOINs pesados por 1 vista optimizada) */
+    LEFT JOIN `PICADE`.`Vista_Usuarios` `U_Hist` 
+        ON `H_DC`.`Fk_Id_Usuario_DatosCap_Created_by` = `U_Hist`.`Id_Usuario`
     
     /* FILTRO DE AGRUPACIÓN: Trae a todos los registros vinculados al mismo PADRE descubierto en el Bloque 1 */
     WHERE `H_VC`.`Id_Capacitacion` = v_Id_Padre_Capacitacion 
