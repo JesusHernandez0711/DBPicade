@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════════════════════════════════════════════════════
-   PROCEDIMIENTO: SP_ConsularMisCursos
+   PROCEDIMIENTO: SP_ConsultarMisCursos
    ══════════════════════════════════════════════════════════════════════════════════════════════════════════
    
    I. FICHA TÉCNICA DE INGENIERÍA (TECHNICAL DATASHEET)
@@ -35,9 +35,9 @@
 
 DELIMITER $$
 
- DROP PROCEDURE IF EXISTS `SP_ConsularMisCursos`$$
+ DROP PROCEDURE IF EXISTS `SP_ConsultarMisCursos`$$
 
-CREATE PROCEDURE `SP_ConsularMisCursos`(
+CREATE PROCEDURE `SP_ConsultarMisCursos`(
     /* ══════════════════════════════════════════════════════════════════════════════════════════════════════
        SECCIÓN DE PARÁMETROS DE ENTRADA
        ══════════════════════════════════════════════════════════════════════════════════════════════════════ */
